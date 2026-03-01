@@ -62,6 +62,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
           <button
               className="add-to-cart-btn"
+              onClick={addToCart}
               disabled={product.quantity === 0}
           >
               {product.quantity > 0 ? 'В корзину' : 'Нет в наличии'}

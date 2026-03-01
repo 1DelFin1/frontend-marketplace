@@ -27,3 +27,4 @@ yarn-error.log*
 /.idea/frontend-marketplace.iml
 /.idea/modules.xml
 /.idea/vcs.xml
+.idea

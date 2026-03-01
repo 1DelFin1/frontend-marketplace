@@ -38,13 +38,6 @@ const ProductList: React.FC = () => {
 
   return (
     <div className="product-list-page">
-      <header className="products-header">
-        <h1>Каталог товаров</h1>
-        <div className="products-count">
-          Найдено товаров: {products.length}
-        </div>
-      </header>
-
       <div className="products-grid">
         {products.map(product => (
           <ProductCard key={product.id} product={product} />
