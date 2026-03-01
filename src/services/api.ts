@@ -4,6 +4,10 @@ import { Product, ProductCreate, ProductUpdate } from '../types/product';
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
 
 class ApiService {
+  private inFlightProductsRequest: Promise<Product[]> | null = null;
+  private inFlightOrdersRequests = new Map<string, Promise<UserOrder[]>>();
+  private ordersCache = new Map<string, { data: UserOrder[]; expiresAt: number }>();
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
@@ -94,16 +98,53 @@ class ApiService {
     });
   }
 
-  async getOrdersByUserId(userId: string): Promise<UserOrder[]> {
-    return this.request(`/orders/users/${userId}`, {
+  async getOrdersByUserId(userId: string, forceRefresh = false): Promise<UserOrder[]> {
+    const cacheKey = userId;
+    const now = Date.now();
+    const cacheTtlMs = 15_000;
+
+    if (!forceRefresh) {
+      const cached = this.ordersCache.get(cacheKey);
+      if (cached && cached.expiresAt > now) {
+        return cached.data;
+      }
+    }
+
+    const inFlight = this.inFlightOrdersRequests.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const requestPromise = this.request<UserOrder[]>(`/orders/users/${userId}`, {
       credentials: 'include',
-    });
+    })
+      .then((orders) => {
+        this.ordersCache.set(cacheKey, {
+          data: orders,
+          expiresAt: Date.now() + cacheTtlMs,
+        });
+        return orders;
+      })
+      .finally(() => {
+        this.inFlightOrdersRequests.delete(cacheKey);
+      });
+
+    this.inFlightOrdersRequests.set(cacheKey, requestPromise);
+    return requestPromise;
   }
 
   async getProducts(): Promise<Product[]> {
-    return this.request('/products', {
+    if (this.inFlightProductsRequest) {
+      return this.inFlightProductsRequest;
+    }
+
+    this.inFlightProductsRequest = this.request<Product[]>('/products', {
       credentials: 'include',
+    }).finally(() => {
+      this.inFlightProductsRequest = null;
     });
+
+    return this.inFlightProductsRequest;
   }
 
   async getProductById(productId: number): Promise<Product> {

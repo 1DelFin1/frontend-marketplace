@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import { User, UserUpdate } from '../../types/user';
 import { apiService } from '../../services/api';
+import { getUserFromToken } from '../../utils/auth';
 
 const Profile: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -15,7 +16,13 @@ const Profile: React.FC = () => {
 
   const fetchUserData = async () => {
     try {
-      const userData = await apiService.getCurrentUser();
+      const tokenUser = getUserFromToken();
+      if (!tokenUser?.id) {
+        toast.error('Ошибка авторизации');
+        return;
+      }
+
+      const userData = await apiService.getUserById(tokenUser.id);
       setUser(userData);
       setFormData({
         name: userData.name,

@@ -119,7 +119,15 @@ function AppContent({ isAuthenticated, handleLoginSuccess }: AppContentProps) {
 
     refreshCartItemsCount();
     void refreshActiveOrdersCount();
-  }, [isAuthenticated, location.pathname, refreshCartItemsCount, refreshActiveOrdersCount]);
+  }, [isAuthenticated, refreshCartItemsCount, refreshActiveOrdersCount]);
+
+  useEffect(() => {
+    if (!isAuthenticated || location.pathname !== '/orders') {
+      return;
+    }
+
+    void refreshActiveOrdersCount();
+  }, [isAuthenticated, location.pathname, refreshActiveOrdersCount]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -134,15 +142,20 @@ function AppContent({ isAuthenticated, handleLoginSuccess }: AppContentProps) {
     const handleCartUpdated = () => {
       refreshCartItemsCount();
     };
+    const handleOrdersUpdated = () => {
+      void refreshActiveOrdersCount();
+    };
 
     window.addEventListener('storage', handleStorage);
     window.addEventListener('cart-updated', handleCartUpdated as EventListener);
+    window.addEventListener('orders-updated', handleOrdersUpdated as EventListener);
 
     return () => {
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('cart-updated', handleCartUpdated as EventListener);
+      window.removeEventListener('orders-updated', handleOrdersUpdated as EventListener);
     };
-  }, [isAuthenticated, refreshCartItemsCount]);
+  }, [isAuthenticated, refreshCartItemsCount, refreshActiveOrdersCount]);
 
   return (
     <div className="App">

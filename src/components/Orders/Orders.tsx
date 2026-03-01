@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { Product } from '../../types/product';
 import { OrderItem, UserOrder } from '../../types/user';
 import { apiService } from '../../services/api';
+import { getUserFromToken } from '../../utils/auth';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -292,14 +293,18 @@ const Orders: React.FC = () => {
     setError('');
 
     try {
-      const currentUser = await apiService.getCurrentUser();
-      const userResponse = await apiService.getUserByIdRaw(currentUser.id);
+      const tokenUser = getUserFromToken();
+      if (!tokenUser?.id) {
+        throw new Error('Unauthorized');
+      }
+
+      const userResponse = await apiService.getUserByIdRaw(tokenUser.id);
 
       let resolvedOrders = extractOrdersFromUserResponse(userResponse);
       const hasOrdersInUserResponse = hasOrdersArrayInUserResponse(userResponse);
 
       if (!hasOrdersInUserResponse && resolvedOrders.length === 0) {
-        const fallbackOrders = await apiService.getOrdersByUserId(currentUser.id);
+        const fallbackOrders = await apiService.getOrdersByUserId(tokenUser.id);
         resolvedOrders = fallbackOrders
           .map(normalizeOrder)
           .filter((order): order is UserOrderView => order !== null);
