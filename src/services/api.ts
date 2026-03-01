@@ -1,4 +1,4 @@
-import { User, UserCreate, UserUpdate, LoginForm } from '../types/user';
+import { User, UserCreate, UserUpdate, LoginForm, UserOrder } from '../types/user';
 import { Product, ProductCreate, ProductUpdate } from '../types/product';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
@@ -67,6 +67,12 @@ class ApiService {
     });
   }
 
+  async getUserByIdRaw(userId: string): Promise<unknown> {
+    return this.request(`/users/${userId}`, {
+      credentials: 'include',
+    });
+  }
+
   async getUserByEmail(email: string): Promise<User> {
     return this.request(`/users/${email}`, {
       credentials: 'include',
@@ -84,6 +90,12 @@ class ApiService {
   async deleteUser(userId: string): Promise<void> {
     await this.request(`/users/${userId}`, {
       method: 'DELETE',
+      credentials: 'include',
+    });
+  }
+
+  async getOrdersByUserId(userId: string): Promise<UserOrder[]> {
+    return this.request(`/orders/users/${userId}`, {
       credentials: 'include',
     });
   }

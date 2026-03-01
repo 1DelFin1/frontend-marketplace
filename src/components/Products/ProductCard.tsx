@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Product } from '../../types/product';
 import { toast } from 'react-toastify';
 import { CartItem } from '../../types/user';
@@ -8,13 +9,13 @@ interface ProductCardProps {
 }
 
 const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
-    const addToCart = () => {
+  const addToCart = () => {
     const savedCart = localStorage.getItem('cart');
     const cart: { items: CartItem[]; total: number } = savedCart
       ? JSON.parse(savedCart)
       : { items: [], total: 0 };
 
-    const existingItem = cart.items.find(item => item.product_id === product.id);
+    const existingItem = cart.items.find((item) => item.product_id === product.id);
 
     if (existingItem) {
       existingItem.quantity += 1;
@@ -22,7 +23,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       cart.items.push({
         product_id: product.id,
         quantity: 1,
-        product: product
+        product,
       });
     }
 
@@ -32,40 +33,45 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     }, 0);
 
     localStorage.setItem('cart', JSON.stringify(cart));
+    window.dispatchEvent(new Event('cart-updated'));
     toast.success('Товар добавлен в корзину!');
   };
 
   return (
     <div className="product-card">
-      <div className="product-image">
-        {product.image_url ? (
-          <img src={product.image_url} alt={product.name} />
-        ) : (
-          <div className="product-image-placeholder">Нет изображения</div>
-        )}
-      </div>
+      <Link to={`/products/${product.id}`} className="product-card-link">
+        <div className="product-image">
+          {product.image_url ? (
+            <img src={product.image_url} alt={product.name} />
+          ) : (
+            <div className="product-image-placeholder">Нет изображения</div>
+          )}
+        </div>
 
-      <div className="product-info">
-        <h3 className="product-name">{product.name}</h3>
-        <p className="product-description">{product.description}</p>
+        <div className="product-info">
+          <h3 className="product-name">{product.name}</h3>
+          <p className="product-description">{product.description}</p>
 
-        {product.category && (
-          <div className="product-category">Категория: {product.category}</div>
-        )}
+          {product.category && (
+            <div className="product-category">Категория: {product.category}</div>
+          )}
 
           <div className="product-details">
-              <div className="product-quantity">
-                  {product.quantity > 0 ? `В наличии: ${product.quantity}` : 'Нет в наличии'}
-              </div>
-              <div className="product-price">{product.price} ₽</div>
+            <div className={`product-quantity ${product.quantity > 0 ? 'in-stock' : 'out-of-stock'}`}>
+              {product.quantity > 0 ? `В наличии: ${product.quantity}` : 'Нет в наличии'}
+            </div>
+            <div className="product-price">{product.price} ₽</div>
           </div>
+        </div>
+      </Link>
 
-          <button
-              className="add-to-cart-btn"
-              onClick={addToCart}
-              disabled={product.quantity === 0}
-          >
-              {product.quantity > 0 ? 'В корзину' : 'Нет в наличии'}
+      <div className="product-card-actions">
+        <button
+          className="add-to-cart-btn"
+          onClick={addToCart}
+          disabled={product.quantity === 0}
+        >
+          {product.quantity > 0 ? 'В корзину' : 'Нет в наличии'}
         </button>
       </div>
     </div>

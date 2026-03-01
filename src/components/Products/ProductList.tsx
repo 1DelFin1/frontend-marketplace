@@ -18,7 +18,13 @@ const ProductList: React.FC = () => {
     try {
       setLoading(true);
       const productsData = await apiService.getProducts();
-      setProducts(productsData);
+      const sortedProducts = [...productsData].sort((a, b) => {
+        const aInStock = (a.quantity || 0) > 0;
+        const bInStock = (b.quantity || 0) > 0;
+        return Number(bInStock) - Number(aInStock);
+      });
+
+      setProducts(sortedProducts);
     } catch (err: any) {
       setError('Ошибка при загрузке товаров');
       toast.error('Не удалось загрузить товары');
