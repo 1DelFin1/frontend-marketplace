@@ -988,6 +988,40 @@ body {
   align-self: start;
 }
 
+.profile-hero-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.profile-hero-actions > button {
+  width: 190px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logout-btn {
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 10px 14px;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.logout-btn:hover:not(:disabled) {
+  background: #ffe4e6;
+}
+
+.logout-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .profile-orders-list {
   display: flex;
   flex-direction: column;
@@ -1090,8 +1124,14 @@ body {
   }
 
   .profile-edit-trigger {
+    align-self: auto;
+  }
+
+  .profile-hero-actions {
     grid-column: 1 / -1;
-    justify-self: start;
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: center;
   }
 
   .profile-hero-meta h1 {
@@ -1111,6 +1151,16 @@ body {
 
   .profile-hero-meta p {
     font-size: 16px;
+  }
+
+  .profile-hero-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .profile-hero-actions > .profile-edit-trigger,
+  .profile-hero-actions > .profile-logout-trigger {
+    width: 100%;
   }
 
   .profile-form-grid {

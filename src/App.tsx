@@ -77,9 +77,10 @@ const formatBadgeCount = (count: number): string => (count > 99 ? '99+' : String
 interface AppContentProps {
   isAuthenticated: boolean;
   handleLoginSuccess: () => void;
+  handleLogout: () => void;
 }
 
-function AppContent({ isAuthenticated, handleLoginSuccess }: AppContentProps) {
+function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppContentProps) {
   const location = useLocation();
   const isAuthPage = location.pathname === '/login' || location.pathname === '/register';
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
@@ -260,7 +261,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess }: AppContentProps) {
               path="/profile"
               element={
                 isAuthenticated ?
-                <Profile /> :
+                <Profile onLogout={handleLogout} /> :
                 <Navigate to="/login" replace />
               }
             />
@@ -327,6 +328,10 @@ function App() {
     checkAuth();
   };
 
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+  };
+
   if (loading) {
     return <div>Загрузка...</div>;
   }
@@ -336,6 +341,7 @@ function App() {
       <AppContent
         isAuthenticated={isAuthenticated}
         handleLoginSuccess={handleLoginSuccess}
+        handleLogout={handleLogout}
       />
     </Router>
   );

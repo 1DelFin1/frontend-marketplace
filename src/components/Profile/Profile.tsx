@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { User, UserUpdate, UserOrder } from '../../types/user';
 import { apiService } from '../../services/api';
-import { getUserFromToken } from '../../utils/auth';
+import { clearAuth, getUserFromToken } from '../../utils/auth';
 
 const ACTIVE_ORDER_STATUSES = new Set([
   'pending',
@@ -88,14 +88,20 @@ const getInitials = (name: string): string => {
   return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 };
 
-const Profile: React.FC = () => {
+interface ProfileProps {
+  onLogout: () => void;
+}
+
+const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
   const [user, setUser] = useState<User | null>(null);
   const [activeOrders, setActiveOrders] = useState<UserOrder[]>([]);
   const [editMode, setEditMode] = useState(false);
   const [formData, setFormData] = useState<UserUpdate>({});
   const [saving, setSaving] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [loading, setLoading] = useState(true);
   const [ordersLoading, setOrdersLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     void fetchProfileData();
@@ -166,6 +172,27 @@ const Profile: React.FC = () => {
     }));
   };
 
+  const handleLogout = async () => {
+    if (loggingOut) {
+      return;
+    }
+
+    setLoggingOut(true);
+
+    try {
+      await apiService.logout();
+    } catch {
+      // Игнорируем ошибку запроса и очищаем локальную авторизацию ниже.
+    }
+
+    clearAuth();
+    localStorage.removeItem('cart');
+    window.dispatchEvent(new Event('cart-updated'));
+    onLogout();
+    toast.success('Вы вышли из аккаунта');
+    navigate('/login', { replace: true });
+  };
+
   if (loading || !user) {
     return <div className="loading">Загрузка профиля...</div>;
   }
@@ -203,15 +230,25 @@ const Profile: React.FC = () => {
           </div>
         </div>
 
-        {!editMode && (
+        <div className="profile-hero-actions">
+          {!editMode && (
+            <button
+              type="button"
+              onClick={() => setEditMode(true)}
+              className="edit-btn profile-edit-trigger"
+            >
+              Редактировать
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setEditMode(true)}
-            className="edit-btn profile-edit-trigger"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="logout-btn profile-logout-trigger"
           >
-            Редактировать
+            {loggingOut ? 'Выходим...' : 'Выйти из аккаунта'}
           </button>
-        )}
+        </div>
       </div>
 
       <div className="profile-grid">
