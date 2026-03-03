@@ -4,6 +4,8 @@ export interface Product {
   description: string;
   price: number;
   quantity: number;  // Добавил quantity
+  seller_id?: string;
+  category_id?: number;
   properties?: Record<string, unknown> | string;
   image_url?: string; // Опциональное поле, если есть в ответе
   category?: string;  // Опциональное поле
@@ -17,6 +19,8 @@ export interface ProductCreate {
   description: string;
   price: number;
   quantity: number;
+  seller_id: string;
+  category_id: number;
   properties?: Record<string, unknown> | string;
 }
 

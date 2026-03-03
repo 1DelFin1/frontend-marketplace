@@ -4,11 +4,13 @@ import Login from './components/Auth/Login';
 import Register from './components/Auth/Register';
 import ProductList from './components/Products/ProductList';
 import ProductDetails from './components/Products/ProductDetails';
+import StorePage from './components/Products/StorePage';
 import Profile from './components/Profile/Profile';
 import CartFunc from './components/Cart/cartFunc';
 import Orders from './components/Orders/Orders';
 import SellerDashboard from './components/Seller/SellerDashboard';
 import SellerProfile from './components/Seller/SellerProfile';
+import SellerProductsPage from './components/Seller/SellerProductsPage';
 import { apiService } from './services/api';
 import { isTokenValid, getUserFromToken } from './utils/auth';
 
@@ -278,6 +280,18 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
               }
             />
             <Route
+              path="/seller/products"
+              element={
+                isAuthenticated ?
+                (
+                  isSellerAccount ?
+                  <SellerProductsPage /> :
+                  <Navigate to="/products" replace />
+                ) :
+                <Navigate to="/login" replace />
+              }
+            />
+            <Route
               path="/products"
               element={
                 isAuthenticated ?
@@ -297,6 +311,18 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
                   <ProductDetails />
+                ) :
+                <Navigate to="/login" replace />
+              }
+            />
+            <Route
+              path="/store/:sellerId"
+              element={
+                isAuthenticated ?
+                (
+                  isSellerAccount ?
+                  <Navigate to="/seller" replace /> :
+                  <StorePage />
                 ) :
                 <Navigate to="/login" replace />
               }

@@ -1,5 +1,6 @@
 import { User, UserCreate, UserUpdate, LoginForm, UserOrder, Seller, SellerCreate, SellerUpdate } from '../types/user';
 import { Product, ProductCreate, ProductUpdate } from '../types/product';
+import { Category, CategoryCreate } from '../types/category';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
 
@@ -108,6 +109,12 @@ class ApiService {
       });
 
     return this.inFlightCurrentSellerRequest;
+  }
+
+  async getSellerById(sellerId: string): Promise<Seller> {
+    return this.request(`/sellers/${sellerId}`, {
+      credentials: 'include',
+    });
   }
 
   async updateSeller(sellerId: string, sellerData: SellerUpdate): Promise<Seller> {
@@ -222,6 +229,20 @@ class ApiService {
   async deleteProduct(productId: number): Promise<void> {
     await this.request(`/products/${productId}`, {
       method: 'DELETE',
+      credentials: 'include',
+    });
+  }
+
+  async getCategories(): Promise<Category[]> {
+    return this.request('/categories', {
+      credentials: 'include',
+    });
+  }
+
+  async createCategory(categoryData: CategoryCreate): Promise<Category> {
+    return this.request('/categories', {
+      method: 'POST',
+      body: JSON.stringify(categoryData),
       credentials: 'include',
     });
   }

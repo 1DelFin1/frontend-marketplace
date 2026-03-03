@@ -1,16 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { apiService } from '../../services/api';
 import { Seller } from '../../types/user';
 import { getUserFromToken } from '../../utils/auth';
 
 const navigationItems = [
-  'Главная',
-  'Товары и цены',
-  'Финансы',
-  'Аналитика',
-  'Продвижение',
-  'Отзывы',
+  { label: 'Главная', to: '/seller' },
+  { label: 'Товары и цены', to: '/seller/products' },
+  { label: 'Финансы' },
+  { label: 'Аналитика' },
+  { label: 'Продвижение' },
+  { label: 'Отзывы' },
 ];
 
 const trend = [74, 70, 72, 69, 71, 74, 76, 73, 68, 67, 62, 63, 75, 73, 45];
@@ -19,6 +19,7 @@ const toPercent = (value: number): string => `${value.toFixed(1)}%`;
 
 const SellerDashboard: React.FC = () => {
   const [seller, setSeller] = useState<Seller | null>(null);
+  const location = useLocation();
 
   useEffect(() => {
     const loadSeller = async () => {
@@ -68,15 +69,26 @@ const SellerDashboard: React.FC = () => {
       </header>
 
       <nav className="seller-nav">
-        {navigationItems.map((item, index) => (
-          <button
-            type="button"
-            key={item}
-            className={`seller-nav-item ${index === 0 ? 'active' : ''}`}
-          >
-            {item}
-          </button>
-        ))}
+        {navigationItems.map((item) => {
+          if (item.to) {
+            const isActive = location.pathname === item.to;
+            return (
+              <Link
+                key={item.label}
+                to={item.to}
+                className={`seller-nav-item ${isActive ? 'active' : ''}`}
+              >
+                {item.label}
+              </Link>
+            );
+          }
+
+          return (
+            <span key={item.label} className="seller-nav-item seller-nav-item-disabled">
+              {item.label}
+            </span>
+          );
+        })}
       </nav>
 
       <div className="seller-layout">

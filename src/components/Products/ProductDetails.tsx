@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiService } from '../../services/api';
 import { Product } from '../../types/product';
-import { CartItem } from '../../types/user';
+import { CartItem, Seller } from '../../types/user';
+import mockStorePhoto from '../../assets/mock-store-photo.svg';
 
 const BASE_PRODUCT_DATA_KEYS = [
   'name',
@@ -42,6 +43,9 @@ const extractPropertiesKeys = (properties: Product['properties']): string[] => {
 const ProductDetails: React.FC = () => {
   const { productId } = useParams();
   const [product, setProduct] = useState<Product | null>(null);
+  const [seller, setSeller] = useState<Seller | null>(null);
+  const [sellerLoading, setSellerLoading] = useState(false);
+  const [sellerError, setSellerError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isFavorite, setIsFavorite] = useState(false);
@@ -63,8 +67,25 @@ const ProductDetails: React.FC = () => {
 
       try {
         setLoading(true);
+        setSeller(null);
+        setSellerError('');
         const productData = await apiService.getProductById(numericProductId);
         setProduct(productData);
+
+        if (!productData.seller_id) {
+          setSellerError('Для товара не указан продавец');
+          return;
+        }
+
+        setSellerLoading(true);
+        try {
+          const sellerData = await apiService.getSellerById(productData.seller_id);
+          setSeller(sellerData);
+        } catch {
+          setSellerError('Не удалось загрузить данные продавца');
+        } finally {
+          setSellerLoading(false);
+        }
       } catch (err) {
         console.error('Error fetching product:', err);
         setError('Не удалось загрузить товар');
@@ -124,6 +145,22 @@ const ProductDetails: React.FC = () => {
   const toggleFavorite = () => {
     setIsFavorite((prev) => !prev);
   };
+
+  const formattedSellerRating = useMemo(() => {
+    if (!seller || typeof seller.rating !== 'number') {
+      return '—';
+    }
+
+    return seller.rating.toFixed(1);
+  }, [seller]);
+
+  const formattedSellerOrdersCount = useMemo(() => {
+    if (!seller || typeof seller.orders_count !== 'number') {
+      return '—';
+    }
+
+    return seller.orders_count.toLocaleString('ru-RU');
+  }, [seller]);
 
   if (loading) {
     return <div className="loading">Загрузка товара...</div>;
@@ -204,14 +241,43 @@ const ProductDetails: React.FC = () => {
 
           <aside className="seller-panel">
             <h3>Продавец</h3>
-            <div className="seller-name">ТЕСТОВЫЙ ПРОДАВЕЦ</div>
-            <div className="seller-meta">
-              <span>Рейтинг: 4.8</span>
-              <span>Заказов: 120К</span>
-            </div>
-            <button type="button" className="seller-store-button">
-              о магазине
-            </button>
+            {sellerLoading && (
+              <div className="seller-panel-state">Загрузка данных продавца...</div>
+            )}
+
+            {!sellerLoading && seller && (
+              <>
+                <div className="seller-head">
+                  <div className="seller-store-photo-wrap">
+                    <img
+                      src={mockStorePhoto}
+                      alt={`Фото магазина ${seller.name}`}
+                      className="seller-store-photo"
+                    />
+                  </div>
+                  <div className="seller-name">{seller.name}</div>
+                </div>
+                <div className="seller-meta">
+                  <div className="seller-meta-item">
+                    <strong>{formattedSellerRating}</strong>
+                    <span>Рейтинг</span>
+                  </div>
+                  <div className="seller-meta-item">
+                    <strong>{formattedSellerOrdersCount}</strong>
+                    <span>Заказов</span>
+                  </div>
+                </div>
+                <Link to={`/store/${seller.id}`} className="seller-store-button">
+                  Перейти в магазин
+                </Link>
+              </>
+            )}
+
+            {!sellerLoading && !seller && sellerError && (
+              <div className="seller-panel-state seller-panel-state-error">
+                {sellerError}
+              </div>
+            )}
           </aside>
         </div>
       </section>
