@@ -7,6 +7,8 @@ import ProductDetails from './components/Products/ProductDetails';
 import Profile from './components/Profile/Profile';
 import CartFunc from './components/Cart/cartFunc';
 import Orders from './components/Orders/Orders';
+import SellerDashboard from './components/Seller/SellerDashboard';
+import SellerProfile from './components/Seller/SellerProfile';
 import { apiService } from './services/api';
 import { isTokenValid, getUserFromToken } from './utils/auth';
 
@@ -82,7 +84,11 @@ interface AppContentProps {
 
 function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppContentProps) {
   const location = useLocation();
+  const tokenUser = getUserFromToken();
+  const isSellerAccount = tokenUser?.account_type === 'seller';
+  const defaultAuthRoute = isSellerAccount ? '/seller' : '/products';
   const isAuthPage = location.pathname === '/login' || location.pathname === '/register';
+  const isSellerPage = location.pathname.startsWith('/seller');
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [cartItemsCount, setCartItemsCount] = useState(0);
 
@@ -118,20 +124,26 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
       return;
     }
 
+    if (isSellerAccount) {
+      setCartItemsCount(0);
+      setActiveOrdersCount(0);
+      return;
+    }
+
     refreshCartItemsCount();
     void refreshActiveOrdersCount();
-  }, [isAuthenticated, refreshCartItemsCount, refreshActiveOrdersCount]);
+  }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount]);
 
   useEffect(() => {
-    if (!isAuthenticated || location.pathname !== '/orders') {
+    if (!isAuthenticated || isSellerAccount || location.pathname !== '/orders') {
       return;
     }
 
     void refreshActiveOrdersCount();
-  }, [isAuthenticated, location.pathname, refreshActiveOrdersCount]);
+  }, [isAuthenticated, isSellerAccount, location.pathname, refreshActiveOrdersCount]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || isSellerAccount) {
       return;
     }
 
@@ -156,12 +168,12 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
       window.removeEventListener('cart-updated', handleCartUpdated as EventListener);
       window.removeEventListener('orders-updated', handleOrdersUpdated as EventListener);
     };
-  }, [isAuthenticated, refreshCartItemsCount, refreshActiveOrdersCount]);
+  }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount]);
 
   return (
     <div className="App">
       <div className="layout-shell">
-        {!isAuthPage && (
+        {!isAuthPage && !isSellerPage && (
           <header className="app-header">
             <nav className="main-nav">
               <Link to="/products" className="nav-brand">маркетплейс</Link>
@@ -180,7 +192,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 </button>
               </div>
               <div className="header-actions">
-                {isAuthenticated && (
+                {isAuthenticated && !isSellerAccount && (
                   <>
                     <Link to="/profile" className="header-action">
                       <span className="header-action-icon-wrap">
@@ -229,7 +241,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
               path="/login"
               element={
                 isAuthenticated ?
-                <Navigate to="/products" replace /> :
+                <Navigate to={defaultAuthRoute} replace /> :
                 <Login onLoginSuccess={handleLoginSuccess} />
               }
             />
@@ -237,15 +249,43 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
               path="/register"
               element={
                 isAuthenticated ?
-                <Navigate to="/products" replace /> :
+                <Navigate to={defaultAuthRoute} replace /> :
                 <Register />
+              }
+            />
+            <Route
+              path="/seller"
+              element={
+                isAuthenticated ?
+                (
+                  isSellerAccount ?
+                  <SellerDashboard /> :
+                  <Navigate to="/products" replace />
+                ) :
+                <Navigate to="/login" replace />
+              }
+            />
+            <Route
+              path="/seller/profile"
+              element={
+                isAuthenticated ?
+                (
+                  isSellerAccount ?
+                  <SellerProfile onLogout={handleLogout} /> :
+                  <Navigate to="/products" replace />
+                ) :
+                <Navigate to="/login" replace />
               }
             />
             <Route
               path="/products"
               element={
                 isAuthenticated ?
-                <ProductList /> :
+                (
+                  isSellerAccount ?
+                  <Navigate to="/seller" replace /> :
+                  <ProductList />
+                ) :
                 <Navigate to="/login" replace />
               }
             />
@@ -253,7 +293,11 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
               path="/products/:productId"
               element={
                 isAuthenticated ?
-                <ProductDetails /> :
+                (
+                  isSellerAccount ?
+                  <Navigate to="/seller" replace /> :
+                  <ProductDetails />
+                ) :
                 <Navigate to="/login" replace />
               }
             />
@@ -261,7 +305,11 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
               path="/profile"
               element={
                 isAuthenticated ?
-                <Profile onLogout={handleLogout} /> :
+                (
+                  isSellerAccount ?
+                  <Navigate to="/seller" replace /> :
+                  <Profile onLogout={handleLogout} />
+                ) :
                 <Navigate to="/login" replace />
               }
             />
@@ -269,7 +317,11 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
               path="/cart"
               element={
                 isAuthenticated ?
-                <CartFunc /> :
+                (
+                  isSellerAccount ?
+                  <Navigate to="/seller" replace /> :
+                  <CartFunc />
+                ) :
                 <Navigate to="/login" replace />
               }
             />
@@ -277,7 +329,11 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
               path="/orders"
               element={
                 isAuthenticated ?
-                <Orders /> :
+                (
+                  isSellerAccount ?
+                  <Navigate to="/seller" replace /> :
+                  <Orders />
+                ) :
                 <Navigate to="/login" replace />
               }
             />
@@ -285,17 +341,21 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
               path="/favorites"
               element={
                 isAuthenticated ?
-                <PlaceholderPage
-                  title="Избранное"
-                  description="Выбранные товары будут отображаться здесь."
-                /> :
+                (
+                  isSellerAccount ?
+                  <Navigate to="/seller" replace /> :
+                  <PlaceholderPage
+                    title="Избранное"
+                    description="Выбранные товары будут отображаться здесь."
+                  />
+                ) :
                 <Navigate to="/login" replace />
               }
             />
             <Route
               path="/"
               element={
-                <Navigate to={isAuthenticated ? "/products" : "/login"} replace />
+                <Navigate to={isAuthenticated ? defaultAuthRoute : "/login"} replace />
               }
             />
           </Routes>

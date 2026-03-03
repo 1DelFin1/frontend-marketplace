@@ -1,12 +1,14 @@
-import { User, UserCreate, UserUpdate, LoginForm, UserOrder } from '../types/user';
+import { User, UserCreate, UserUpdate, LoginForm, UserOrder, Seller, SellerCreate, SellerUpdate } from '../types/user';
 import { Product, ProductCreate, ProductUpdate } from '../types/product';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
 
 class ApiService {
   private inFlightProductsRequest: Promise<Product[]> | null = null;
+  private inFlightCurrentSellerRequest: Promise<Seller> | null = null;
   private inFlightOrdersRequests = new Map<string, Promise<UserOrder[]>>();
   private ordersCache = new Map<string, { data: UserOrder[]; expiresAt: number }>();
+  private currentSellerCache: { data: Seller; expiresAt: number } | null = null;
 
   private async request<T>(
     endpoint: string,
@@ -65,10 +67,58 @@ class ApiService {
     });
   }
 
+  async createSeller(sellerData: SellerCreate): Promise<Seller> {
+    return this.request('/sellers', {
+      method: 'POST',
+      body: JSON.stringify(sellerData),
+      credentials: 'include',
+    });
+  }
+
   async getUserById(userId: string): Promise<User> {
     return this.request(`/users/${userId}`, {
       credentials: 'include',
     });
+  }
+
+  async getCurrentSeller(forceRefresh = false): Promise<Seller> {
+    const now = Date.now();
+    const cacheTtlMs = 15_000;
+
+    if (!forceRefresh && this.currentSellerCache && this.currentSellerCache.expiresAt > now) {
+      return this.currentSellerCache.data;
+    }
+
+    if (this.inFlightCurrentSellerRequest) {
+      return this.inFlightCurrentSellerRequest;
+    }
+
+    this.inFlightCurrentSellerRequest = this.request<Seller>('/sellers/me', {
+      credentials: 'include',
+    })
+      .then((seller) => {
+        this.currentSellerCache = {
+          data: seller,
+          expiresAt: Date.now() + cacheTtlMs,
+        };
+        return seller;
+      })
+      .finally(() => {
+        this.inFlightCurrentSellerRequest = null;
+      });
+
+    return this.inFlightCurrentSellerRequest;
+  }
+
+  async updateSeller(sellerId: string, sellerData: SellerUpdate): Promise<Seller> {
+    const response = await this.request<Seller>(`/sellers/${sellerId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(sellerData),
+      credentials: 'include',
+    });
+
+    this.currentSellerCache = null;
+    return response;
   }
 
   async getUserByIdRaw(userId: string): Promise<unknown> {

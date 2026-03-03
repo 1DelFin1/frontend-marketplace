@@ -1,10 +1,12 @@
 import {jwtDecode} from 'jwt-decode';
+import { AccountType } from '../types/user';
 
 interface JwtPayload {
     id: string;
     name: string;
     email: string;
     birthday?: string;
+    account_type?: AccountType;
     exp: number;
 }
 

@@ -1,5 +1,7 @@
 import { Product } from "./product";
 
+export type AccountType = "user" | "seller";
+
 export interface User {
   id: string;
   email: string;
@@ -17,6 +19,31 @@ export interface UserCreate {
   birthday: string;
   is_active?: boolean;
   is_superuser?: boolean;
+}
+
+export interface Seller {
+  id: string;
+  email: string;
+  name: string;
+  birthday?: string;
+  rating?: number;
+  orders_count?: number;
+  is_active: boolean;
+}
+
+export interface SellerCreate {
+  email: string;
+  name: string;
+  password: string;
+  birthday: string;
+  is_active?: boolean;
+}
+
+export interface SellerUpdate {
+  email?: string;
+  name?: string;
+  birthday?: string;
+  password?: string;
 }
 
 export interface UserUpdate {
