@@ -52,6 +52,7 @@ const ProductDetails: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isFavorite, setIsFavorite] = useState(false);
+  const [favoriteUpdating, setFavoriteUpdating] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   useEffect(() => {
@@ -155,8 +156,58 @@ const ProductDetails: React.FC = () => {
     }
   };
 
-  const toggleFavorite = () => {
-    setIsFavorite((prev) => !prev);
+  useEffect(() => {
+    const loadFavoriteStatus = async () => {
+      if (!product?.id) {
+        setIsFavorite(false);
+        return;
+      }
+
+      const tokenUser = getUserFromToken();
+      if (!tokenUser?.id) {
+        setIsFavorite(false);
+        return;
+      }
+
+      try {
+        const favorites = await apiService.getFavoritesByUserId(tokenUser.id);
+        setIsFavorite(favorites.some((item) => item.product_id === product.id));
+      } catch {
+        setIsFavorite(false);
+      }
+    };
+
+    void loadFavoriteStatus();
+  }, [product?.id]);
+
+  const toggleFavorite = async () => {
+    if (!product?.id || favoriteUpdating) {
+      return;
+    }
+
+    const tokenUser = getUserFromToken();
+    if (!tokenUser?.id) {
+      toast.error('Требуется авторизация');
+      return;
+    }
+
+    setFavoriteUpdating(true);
+    try {
+      const favorites = await apiService.getFavoritesByUserId(tokenUser.id, true);
+      const isAlreadyFavorite = favorites.some((item) => item.product_id === product.id);
+      const nextFavorites = isAlreadyFavorite
+        ? favorites.filter((item) => item.product_id !== product.id)
+        : [...favorites, { product_id: product.id, quantity: 1 }];
+
+      await apiService.setFavoritesByUserId(tokenUser.id, nextFavorites);
+      setIsFavorite(!isAlreadyFavorite);
+      window.dispatchEvent(new Event('favorites-updated'));
+      toast.success(isAlreadyFavorite ? 'Товар удален из избранного' : 'Товар добавлен в избранное');
+    } catch {
+      toast.error('Не удалось обновить избранное');
+    } finally {
+      setFavoriteUpdating(false);
+    }
   };
 
   const formattedSellerRating = useMemo(() => {
@@ -279,9 +330,12 @@ const ProductDetails: React.FC = () => {
               <button
                 type="button"
                 className={`product-favorite-button ${isFavorite ? 'active' : ''}`}
-                onClick={toggleFavorite}
+                onClick={() => {
+                  void toggleFavorite();
+                }}
                 aria-label={isFavorite ? 'Убрать из избранного' : 'Добавить в избранное'}
                 aria-pressed={isFavorite}
+                disabled={favoriteUpdating}
               >
                 <svg viewBox="0 0 24 24" className="product-favorite-icon" aria-hidden="true">
                   <path d="M12 21.35 10.55 20.03C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09A5.96 5.96 0 0 1 16.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35Z" />

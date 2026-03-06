@@ -9,6 +9,7 @@ import Profile from './components/Profile/Profile';
 import CartFunc from './components/Cart/cartFunc';
 import CheckoutPage from './components/Checkout/CheckoutPage';
 import Orders from './components/Orders/Orders';
+import FavoritesPage from './components/Favorites/FavoritesPage';
 import SellerDashboard from './components/Seller/SellerDashboard';
 import SellerProfile from './components/Seller/SellerProfile';
 import SellerProductsPage from './components/Seller/SellerProductsPage';
@@ -43,13 +44,6 @@ const CartIcon = () => (
   </svg>
 );
 
-const PlaceholderPage: React.FC<{ title: string; description: string }> = ({ title, description }) => (
-  <section className="section-placeholder">
-    <h2>{title}</h2>
-    <p>{description}</p>
-  </section>
-);
-
 const ACTIVE_ORDER_STATUSES = new Set([
   'pending',
   'reserved',
@@ -76,6 +70,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
   const isSellerPage = location.pathname.startsWith('/seller');
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [cartItemsCount, setCartItemsCount] = useState(0);
+  const [favoritesItemsCount, setFavoritesItemsCount] = useState(0);
 
   const refreshCartItemsCount = useCallback(async () => {
     try {
@@ -115,22 +110,42 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
     }
   }, []);
 
+  const refreshFavoritesItemsCount = useCallback(async () => {
+    try {
+      const tokenUser = getUserFromToken();
+      const userId = tokenUser?.id;
+      if (!userId) {
+        setFavoritesItemsCount(0);
+        return;
+      }
+
+      const favoriteItems = await apiService.getFavoritesByUserId(userId);
+      const uniqueItemsCount = new Set(favoriteItems.map((item) => item.product_id)).size;
+      setFavoritesItemsCount(uniqueItemsCount);
+    } catch {
+      setFavoritesItemsCount(0);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isAuthenticated) {
       setCartItemsCount(0);
       setActiveOrdersCount(0);
+      setFavoritesItemsCount(0);
       return;
     }
 
     if (isSellerAccount) {
       setCartItemsCount(0);
       setActiveOrdersCount(0);
+      setFavoritesItemsCount(0);
       return;
     }
 
     void refreshCartItemsCount();
     void refreshActiveOrdersCount();
-  }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount]);
+    void refreshFavoritesItemsCount();
+  }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount, refreshFavoritesItemsCount]);
 
   useEffect(() => {
     if (!isAuthenticated || isSellerAccount || location.pathname !== '/orders') {
@@ -151,15 +166,20 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
     const handleOrdersUpdated = () => {
       void refreshActiveOrdersCount();
     };
+    const handleFavoritesUpdated = () => {
+      void refreshFavoritesItemsCount();
+    };
 
     window.addEventListener('cart-updated', handleCartUpdated as EventListener);
     window.addEventListener('orders-updated', handleOrdersUpdated as EventListener);
+    window.addEventListener('favorites-updated', handleFavoritesUpdated as EventListener);
 
     return () => {
       window.removeEventListener('cart-updated', handleCartUpdated as EventListener);
       window.removeEventListener('orders-updated', handleOrdersUpdated as EventListener);
+      window.removeEventListener('favorites-updated', handleFavoritesUpdated as EventListener);
     };
-  }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount]);
+  }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount, refreshFavoritesItemsCount]);
 
   return (
     <div className="App">
@@ -205,6 +225,11 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                     <Link to="/favorites" className="header-action">
                       <span className="header-action-icon-wrap">
                         <FavoritesIcon />
+                        {favoritesItemsCount > 0 && (
+                          <span className="header-action-badge">
+                            {formatBadgeCount(favoritesItemsCount)}
+                          </span>
+                        )}
                       </span>
                       <span>Избранное</span>
                     </Link>
@@ -371,10 +396,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <PlaceholderPage
-                    title="Избранное"
-                    description="Выбранные товары будут отображаться здесь."
-                  />
+                  <FavoritesPage />
                 ) :
                 <Navigate to="/login" replace />
               }

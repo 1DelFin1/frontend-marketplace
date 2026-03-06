@@ -106,6 +106,11 @@ export interface CartApiItem {
   quantity: number;
 }
 
+export interface FavoriteApiItem {
+  product_id: number;
+  quantity: number;
+}
+
 export interface Cart {
   items: CartItem[];
   total: number;

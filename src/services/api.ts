@@ -8,6 +8,7 @@ import {
   SellerCreate,
   SellerUpdate,
   CartApiItem,
+  FavoriteApiItem,
   OrderCreatePayload,
   OrderCreateResponse,
 } from '../types/user';
@@ -24,10 +25,12 @@ class ApiService {
   private inFlightCurrentSellerRequest: Promise<Seller> | null = null;
   private inFlightOrdersRequests = new Map<string, Promise<UserOrder[]>>();
   private inFlightCartRequests = new Map<string, Promise<CartApiItem[]>>();
+  private inFlightFavoritesRequests = new Map<string, Promise<FavoriteApiItem[]>>();
   private inFlightSellerOrdersRequests = new Map<string, Promise<UserOrder[] | null>>();
   private inFlightSellerOrdersCountRequests = new Map<string, Promise<number | null>>();
   private ordersCache = new Map<string, { data: UserOrder[]; expiresAt: number }>();
   private cartCache = new Map<string, { data: CartApiItem[]; expiresAt: number }>();
+  private favoritesCache = new Map<string, { data: FavoriteApiItem[]; expiresAt: number }>();
   private productByIdCache = new Map<number, { data: Product; expiresAt: number }>();
   private missingProductByIdCache = new Map<number, { expiresAt: number }>();
   private userByIdCache = new Map<string, { data: User; expiresAt: number }>();
@@ -110,6 +113,52 @@ class ApiService {
     return extractList(payload)
       .map((item) => this.normalizeCartItem(item))
       .filter((item): item is CartApiItem => item !== null);
+  }
+
+  private normalizeFavoriteItem(value: unknown): FavoriteApiItem | null {
+    if (typeof value !== 'object' || value === null) {
+      return null;
+    }
+
+    const item = value as Record<string, unknown>;
+    const productId = this.toFiniteNumber(item.product_id ?? item.productId ?? item.id);
+    const quantity = this.toFiniteNumber(item.quantity) ?? 1;
+
+    if (productId === null || productId <= 0 || quantity <= 0) {
+      return null;
+    }
+
+    return {
+      product_id: Math.trunc(productId),
+      quantity: Math.trunc(quantity),
+    };
+  }
+
+  private normalizeFavorites(payload: unknown): FavoriteApiItem[] {
+    const extractList = (value: unknown): unknown[] => {
+      if (Array.isArray(value)) {
+        return value;
+      }
+
+      if (typeof value === 'object' && value !== null) {
+        const objectValue = value as Record<string, unknown>;
+        if (Array.isArray(objectValue.items)) {
+          return objectValue.items;
+        }
+        if (Array.isArray(objectValue.favorites)) {
+          return objectValue.favorites;
+        }
+        if (Array.isArray(objectValue.products)) {
+          return objectValue.products;
+        }
+      }
+
+      return [];
+    };
+
+    return extractList(payload)
+      .map((item) => this.normalizeFavoriteItem(item))
+      .filter((item): item is FavoriteApiItem => item !== null);
   }
 
   private normalizeSellerOrderItem(value: unknown): UserOrder['order_items'][number] | null {
@@ -666,6 +715,64 @@ class ApiService {
     this.sellerOrdersCountCache.clear();
 
     return response;
+  }
+
+  async getFavoritesByUserId(userId: string, forceRefresh = false): Promise<FavoriteApiItem[]> {
+    const cacheKey = userId;
+    const now = Date.now();
+    const cacheTtlMs = 5_000;
+
+    if (!forceRefresh) {
+      const cached = this.favoritesCache.get(cacheKey);
+      if (cached && cached.expiresAt > now) {
+        return cached.data;
+      }
+    }
+
+    const inFlight = this.inFlightFavoritesRequests.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const requestPromise = this.request<unknown>(`/favorites/${userId}`, {
+      credentials: 'include',
+    })
+      .then((payload) => this.normalizeFavorites(payload))
+      .then((items) => {
+        this.favoritesCache.set(cacheKey, {
+          data: items,
+          expiresAt: Date.now() + cacheTtlMs,
+        });
+        return items;
+      })
+      .finally(() => {
+        this.inFlightFavoritesRequests.delete(cacheKey);
+      });
+
+    this.inFlightFavoritesRequests.set(cacheKey, requestPromise);
+    return requestPromise;
+  }
+
+  async setFavoritesByUserId(userId: string, items: FavoriteApiItem[]): Promise<void> {
+    const cacheTtlMs = 5_000;
+    const normalizedItems = items
+      .map((item) => this.normalizeFavoriteItem(item))
+      .filter((item): item is FavoriteApiItem => item !== null);
+    const uniqueByProductId = Array.from(
+      new Map(normalizedItems.map((item) => [item.product_id, item])).values()
+    );
+
+    await this.request(`/favorites/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify(uniqueByProductId),
+      credentials: 'include',
+    });
+
+    this.favoritesCache.set(userId, {
+      data: uniqueByProductId,
+      expiresAt: Date.now() + cacheTtlMs,
+    });
+    this.inFlightFavoritesRequests.delete(userId);
   }
 
   async getCartByUserId(userId: string, forceRefresh = false): Promise<CartApiItem[]> {
