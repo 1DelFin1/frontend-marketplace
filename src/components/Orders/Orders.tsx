@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { Product } from '../../types/product';
+import { getPrimaryProductImageUrl, Product } from '../../types/product';
 import { OrderItem, UserOrder } from '../../types/user';
 import { apiService } from '../../services/api';
 import { getUserFromToken } from '../../utils/auth';
@@ -40,7 +40,7 @@ const statusTones: Record<string, string> = {
   pending: 'pending',
   reserved: 'processing',
   reservation_failed: 'failed',
-  paid: 'processing',
+  paid: 'success',
   payment_failed: 'failed',
   preparing: 'processing',
   shipping: 'processing',
@@ -52,6 +52,7 @@ const statusTones: Record<string, string> = {
 };
 
 const featuredOrderStatuses = new Set(['reserved', 'preparing', 'shipping', 'delivered']);
+const payableOrderStatuses = new Set(['reserved']);
 
 const isObject = (value: unknown): value is UnknownRecord => {
   return typeof value === 'object' && value !== null;
@@ -136,77 +137,6 @@ const normalizeOrder = (value: unknown): UserOrderView | null => {
   };
 };
 
-const extractOrdersFromUserResponse = (payload: unknown): UserOrderView[] => {
-  const candidates: unknown[] = [];
-
-  if (Array.isArray(payload)) {
-    candidates.push(payload);
-  }
-
-  if (isObject(payload)) {
-    candidates.push(
-      payload.orders,
-      payload.order_history,
-      payload.orderHistory,
-      payload.user_orders,
-      payload.userOrders,
-    );
-
-    const containers = [payload.user, payload.data, payload.result, payload.payload, payload.profile];
-    containers.forEach((container) => {
-      if (!isObject(container)) {
-        return;
-      }
-
-      candidates.push(
-        container.orders,
-        container.order_history,
-        container.orderHistory,
-        container.user_orders,
-        container.userOrders,
-      );
-    });
-  }
-
-  for (const candidate of candidates) {
-    if (!Array.isArray(candidate)) {
-      continue;
-    }
-
-    const normalized = candidate
-      .map(normalizeOrder)
-      .filter((order): order is UserOrderView => order !== null);
-
-    if (normalized.length > 0) {
-      return normalized;
-    }
-  }
-
-  return [];
-};
-
-const hasOrdersArrayInUserResponse = (payload: unknown): boolean => {
-  if (!isObject(payload)) {
-    return Array.isArray(payload);
-  }
-
-  const keysToCheck = ['orders', 'order_history', 'orderHistory', 'user_orders', 'userOrders'];
-
-  const rootHasOrders = keysToCheck.some((key) => Array.isArray(payload[key]));
-  if (rootHasOrders) {
-    return true;
-  }
-
-  const containers = [payload.user, payload.data, payload.result, payload.payload, payload.profile];
-  return containers.some((container) => {
-    if (!isObject(container)) {
-      return false;
-    }
-
-    return keysToCheck.some((key) => Array.isArray(container[key]));
-  });
-};
-
 const formatPrice = (value: number): string => {
   return `${priceFormatter.format(value)} ₽`;
 };
@@ -283,6 +213,7 @@ const Orders: React.FC = () => {
   const [orders, setOrders] = useState<UserOrderView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [payingOrderIds, setPayingOrderIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void fetchOrders();
@@ -298,17 +229,10 @@ const Orders: React.FC = () => {
         throw new Error('Unauthorized');
       }
 
-      const userResponse = await apiService.getUserByIdRaw(tokenUser.id);
-
-      let resolvedOrders = extractOrdersFromUserResponse(userResponse);
-      const hasOrdersInUserResponse = hasOrdersArrayInUserResponse(userResponse);
-
-      if (!hasOrdersInUserResponse && resolvedOrders.length === 0) {
-        const fallbackOrders = await apiService.getOrdersByUserId(tokenUser.id);
-        resolvedOrders = fallbackOrders
-          .map(normalizeOrder)
-          .filter((order): order is UserOrderView => order !== null);
-      }
+      const ordersResponse = await apiService.getOrdersByUserId(tokenUser.id);
+      const resolvedOrders = ordersResponse
+        .map(normalizeOrder)
+        .filter((order): order is UserOrderView => order !== null);
 
       const enrichedOrders = await hydrateProducts(resolvedOrders);
       setOrders(enrichedOrders);
@@ -317,6 +241,32 @@ const Orders: React.FC = () => {
       toast.error('Ошибка загрузки заказов');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePayOrder = async (orderId: string) => {
+    if (payingOrderIds.has(orderId)) {
+      return;
+    }
+
+    setPayingOrderIds((prev) => {
+      const next = new Set(prev);
+      next.add(orderId);
+      return next;
+    });
+
+    try {
+      await apiService.confirmOrder(orderId);
+      toast.success('Заказ успешно оплачен');
+      await fetchOrders();
+    } catch {
+      toast.error('Не удалось оплатить заказ');
+    } finally {
+      setPayingOrderIds((prev) => {
+        const next = new Set(prev);
+        next.delete(orderId);
+        return next;
+      });
     }
   };
 
@@ -349,6 +299,8 @@ const Orders: React.FC = () => {
     const total = calculateOrderTotal(order);
     const toneClass = statusTones[order.status] || statusTones.unknown;
     const statusLabel = statusLabels[order.status] || statusLabels.unknown;
+    const canPay = payableOrderStatuses.has(order.status);
+    const isPaying = payingOrderIds.has(order.id);
 
     return (
       <article key={order.id} className={`order-card ${compact ? 'featured' : ''}`}>
@@ -360,7 +312,7 @@ const Orders: React.FC = () => {
           <span className={`order-status-badge ${toneClass}`}>{statusLabel}</span>
         </header>
 
-        <div className="order-items-list">
+        <div className={`order-items-list ${compact ? 'compact' : ''}`}>
           {order.order_items.length === 0 && (
             <p className="order-items-empty">Состав заказа недоступен</p>
           )}
@@ -369,12 +321,13 @@ const Orders: React.FC = () => {
             const itemName = item.product?.name || `Товар #${item.product_id}`;
             const unitPrice = typeof item.price === 'number' ? item.price : item.product?.price;
             const itemTotal = typeof unitPrice === 'number' ? unitPrice * item.quantity : null;
+            const productImageUrl = getPrimaryProductImageUrl(item.product);
 
             return (
               <div key={`${order.id}-${item.product_id}-${index}`} className="order-item-row">
                 <div className="order-item-image">
-                  {item.product?.image_url ? (
-                    <img src={item.product.image_url} alt={itemName} />
+                  {productImageUrl ? (
+                    <img src={productImageUrl} alt={itemName} />
                   ) : (
                     <span>Фото</span>
                   )}
@@ -402,7 +355,19 @@ const Orders: React.FC = () => {
 
         <footer className="order-card-footer">
           <span>{order.order_items.length} поз.</span>
-          <strong>{total !== null ? formatPrice(total) : 'Итог уточняется'}</strong>
+          <div className="order-card-footer-actions">
+            {canPay && (
+              <button
+                type="button"
+                className="order-pay-button"
+                disabled={isPaying}
+                onClick={() => void handlePayOrder(order.id)}
+              >
+                {isPaying ? 'Оплата...' : 'Оплатить'}
+              </button>
+            )}
+            <strong>{total !== null ? formatPrice(total) : 'Итог уточняется'}</strong>
+          </div>
         </footer>
       </article>
     );

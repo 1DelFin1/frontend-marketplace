@@ -1,81 +1,161 @@
-import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { CartItem, Cart } from '../../types/user';
+import { getPrimaryProductImageUrl } from '../../types/product';
+import { CartApiItem, CartItem, Cart } from '../../types/user';
+import { apiService } from '../../services/api';
+import { getUserFromToken } from '../../utils/auth';
 
 const priceFormatter = new Intl.NumberFormat('ru-RU');
 
 const CartFunc: React.FC = () => {
+  const navigate = useNavigate();
   const [cart, setCart] = useState<Cart>({ items: [], total: 0 });
-  const [loading, setLoading] = useState(false);
+  const [cartLoading, setCartLoading] = useState(true);
+  const [syncingCart, setSyncingCart] = useState(false);
   const [buyingItemId, setBuyingItemId] = useState<number | null>(null);
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
 
-  useEffect(() => {
-    loadCart();
-  }, []);
-
-  const loadCart = () => {
-    const savedCart = localStorage.getItem('cart');
-
-    if (!savedCart) {
-      return;
-    }
-
-    try {
-      const parsedCart: Cart = JSON.parse(savedCart);
-      setCart(parsedCart);
-      setSelectedItems(parsedCart.items.map((item) => item.product_id));
-    } catch (error) {
-      setCart({ items: [], total: 0 });
-      setSelectedItems([]);
-    }
-  };
-
-  const saveCart = (newCart: Cart) => {
-    localStorage.setItem('cart', JSON.stringify(newCart));
-    window.dispatchEvent(new Event('cart-updated'));
-    setCart(newCart);
-    setSelectedItems((previousSelected) =>
-      previousSelected.filter((id) => newCart.items.some((item) => item.product_id === id))
-    );
-  };
-
-  const calculateTotal = (items: CartItem[]): number => {
+  const calculateTotal = useCallback((items: CartItem[]): number => {
     return items.reduce((total, item) => {
       return total + (item.product?.price || 0) * item.quantity;
     }, 0);
+  }, []);
+
+  const buildCart = useCallback((items: CartItem[]): Cart => {
+    return {
+      items,
+      total: calculateTotal(items),
+    };
+  }, [calculateTotal]);
+
+  const toApiItems = (items: CartItem[]): CartApiItem[] => {
+    return items
+      .filter((item) => item.quantity > 0)
+      .map((item) => ({
+        product_id: item.product_id,
+        quantity: Math.trunc(item.quantity),
+      }));
   };
 
-  const updateQuantity = (productId: number, quantity: number) => {
+  const enrichCartItems = useCallback(async (items: CartApiItem[]): Promise<CartItem[]> => {
+    const enrichedItems = await Promise.all(items.map(async (item) => {
+      try {
+        const product = await apiService.getProductById(item.product_id);
+        return {
+          ...item,
+          product,
+        } satisfies CartItem;
+      } catch {
+        return {
+          ...item,
+        } satisfies CartItem;
+      }
+    }));
+
+    return enrichedItems;
+  }, []);
+
+  const loadCart = useCallback(async () => {
+    const tokenUser = getUserFromToken();
+    if (!tokenUser?.id) {
+      setCart({ items: [], total: 0 });
+      setSelectedItems([]);
+      setCartLoading(false);
+      return;
+    }
+
+    setCartLoading(true);
+    try {
+      const apiItems = await apiService.getCartByUserId(tokenUser.id);
+      const enrichedItems = await enrichCartItems(apiItems);
+      const nextCart = buildCart(enrichedItems);
+      setCart(nextCart);
+      setSelectedItems(enrichedItems.map((item) => item.product_id));
+    } catch {
+      setCart({ items: [], total: 0 });
+      setSelectedItems([]);
+      toast.error('Не удалось загрузить корзину');
+    } finally {
+      setCartLoading(false);
+    }
+  }, [buildCart, enrichCartItems]);
+
+  useEffect(() => {
+    void loadCart();
+  }, [loadCart]);
+
+  const persistCartItems = async (items: CartItem[]): Promise<boolean> => {
+    const tokenUser = getUserFromToken();
+    if (!tokenUser?.id) {
+      toast.error('Требуется авторизация');
+      return false;
+    }
+
+    setSyncingCart(true);
+    try {
+      await apiService.setCartByUserId(tokenUser.id, toApiItems(items));
+      window.dispatchEvent(new Event('cart-updated'));
+      return true;
+    } catch {
+      toast.error('Не удалось обновить корзину');
+      return false;
+    } finally {
+      setSyncingCart(false);
+    }
+  };
+
+  const applyCartUpdate = async (newItems: CartItem[]): Promise<boolean> => {
+    const normalizedItems = newItems
+      .map((item) => ({ ...item, quantity: Math.trunc(item.quantity) }))
+      .filter((item) => item.quantity > 0);
+
+    const success = await persistCartItems(normalizedItems);
+    if (!success) {
+      await loadCart();
+      return false;
+    }
+
+    const nextCart = buildCart(normalizedItems);
+    setCart(nextCart);
+    setSelectedItems((previousSelected) => (
+      previousSelected.filter((id) => normalizedItems.some((item) => item.product_id === id))
+    ));
+
+    return true;
+  };
+
+  const updateQuantity = async (productId: number, quantity: number) => {
     const newItems = cart.items
       .map((item) => (item.product_id === productId ? { ...item, quantity } : item))
       .filter((item) => item.quantity > 0);
 
-    const total = calculateTotal(newItems);
-    saveCart({ items: newItems, total });
+    await applyCartUpdate(newItems);
   };
 
-  const removeFromCart = (productId: number) => {
+  const removeFromCart = async (productId: number) => {
     const newItems = cart.items.filter((item) => item.product_id !== productId);
-    const total = calculateTotal(newItems);
-    saveCart({ items: newItems, total });
-    setSelectedItems((previousSelected) => previousSelected.filter((id) => id !== productId));
-    toast.info('Товар удален из корзины');
+    const success = await applyCartUpdate(newItems);
+    if (success) {
+      setSelectedItems((previousSelected) => previousSelected.filter((id) => id !== productId));
+      toast.info('Товар удален из корзины');
+    }
   };
 
-  const clearCart = () => {
-    saveCart({ items: [], total: 0 });
-    setSelectedItems([]);
-    toast.info('Корзина очищена');
+  const clearCart = async () => {
+    const success = await applyCartUpdate([]);
+    if (success) {
+      setSelectedItems([]);
+      toast.info('Корзина очищена');
+    }
   };
 
   const toggleItemSelection = (productId: number) => {
-    setSelectedItems((previousSelected) =>
+    setSelectedItems((previousSelected) => (
       previousSelected.includes(productId)
         ? previousSelected.filter((id) => id !== productId)
         : [...previousSelected, productId]
-    );
+    ));
   };
 
   const toggleSelectAll = () => {
@@ -87,16 +167,17 @@ const CartFunc: React.FC = () => {
     setSelectedItems(cart.items.map((item) => item.product_id));
   };
 
-  const removeSelectedItems = () => {
+  const removeSelectedItems = async () => {
     if (selectedItems.length === 0) {
       return;
     }
 
     const selectedSet = new Set(selectedItems);
     const newItems = cart.items.filter((item) => !selectedSet.has(item.product_id));
-    const total = calculateTotal(newItems);
-    saveCart({ items: newItems, total });
-    toast.info('Выбранные товары удалены');
+    const success = await applyCartUpdate(newItems);
+    if (success) {
+      toast.info('Выбранные товары удалены');
+    }
   };
 
   const buySingleItem = async (productId: number) => {
@@ -119,38 +200,28 @@ const CartFunc: React.FC = () => {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
       const remainingItems = cart.items.filter((item) => item.product_id !== productId);
-      const total = calculateTotal(remainingItems);
-      saveCart({ items: remainingItems, total });
-      toast.success('Покупка оформлена');
-    } catch (error) {
+      const success = await applyCartUpdate(remainingItems);
+      if (success) {
+        toast.success('Покупка оформлена');
+      }
+    } catch {
       toast.error('Ошибка при покупке');
     } finally {
       setBuyingItemId(null);
     }
   };
 
-  const checkout = async () => {
+  const checkout = () => {
     if (selectedItems.length === 0) {
       toast.info('Выберите товары для оформления');
       return;
     }
 
-    setLoading(true);
-
-    try {
-      // Здесь будет API call для оформления заказа
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      const selectedSet = new Set(selectedItems);
-      const remainingItems = cart.items.filter((item) => !selectedSet.has(item.product_id));
-      const total = calculateTotal(remainingItems);
-      saveCart({ items: remainingItems, total });
-      toast.success('Заказ успешно оформлен!');
-    } catch (error) {
-      toast.error('Ошибка при оформлении заказа');
-    } finally {
-      setLoading(false);
-    }
+    navigate('/checkout', {
+      state: {
+        selectedProductIds: selectedItems,
+      },
+    });
   };
 
   const selectedSet = new Set(selectedItems);
@@ -158,6 +229,11 @@ const CartFunc: React.FC = () => {
   const selectedTotal = calculateTotal(selectedCartItems);
   const selectedPositionsCount = selectedCartItems.length;
   const allSelected = cart.items.length > 0 && selectedItems.length === cart.items.length;
+  const isBusy = syncingCart || buyingItemId !== null;
+
+  if (cartLoading) {
+    return <div className="loading">Загрузка корзины...</div>;
+  }
 
   if (cart.items.length === 0) {
     return (
@@ -192,12 +268,12 @@ const CartFunc: React.FC = () => {
               <button
                 type="button"
                 className="cart-text-action"
-                onClick={removeSelectedItems}
-                disabled={selectedItems.length === 0}
+                onClick={() => { void removeSelectedItems(); }}
+                disabled={selectedItems.length === 0 || isBusy}
               >
                 Удалить выбранные
               </button>
-              <button type="button" className="cart-text-action" onClick={clearCart}>
+              <button type="button" className="cart-text-action" onClick={() => { void clearCart(); }} disabled={isBusy}>
                 Очистить корзину
               </button>
             </div>
@@ -210,6 +286,7 @@ const CartFunc: React.FC = () => {
               const unitPrice = item.product?.price || 0;
               const itemTotal = unitPrice * item.quantity;
               const canIncrease = typeof maxQuantity !== 'number' || item.quantity < maxQuantity;
+              const productImageUrl = getPrimaryProductImageUrl(item.product);
 
               return (
                 <article key={item.product_id} className={`cart-item-card ${isSelected ? 'selected' : ''}`}>
@@ -222,15 +299,15 @@ const CartFunc: React.FC = () => {
                   </label>
 
                   <div className="cart-item-image">
-                    {item.product?.image_url ? (
-                      <img src={item.product.image_url} alt={item.product.name} />
+                    {productImageUrl ? (
+                      <img src={productImageUrl} alt={item.product?.name || 'Товар'} />
                     ) : (
                       <span>Фото</span>
                     )}
                   </div>
 
                   <div className="cart-item-details">
-                    <h3>{item.product?.name || 'Товар'}</h3>
+                    <h3>{item.product?.name || `Товар #${item.product_id}`}</h3>
                     <p className="cart-item-subtitle">Продавец: маркетплейс</p>
                     <p className={`cart-item-stock ${maxQuantity && maxQuantity > 0 ? 'in-stock' : 'out-stock'}`}>
                       {maxQuantity && maxQuantity > 0 ? `В наличии: ${maxQuantity}` : 'Нет в наличии'}
@@ -240,8 +317,9 @@ const CartFunc: React.FC = () => {
                       <button
                         type="button"
                         className="cart-delete-icon-btn"
-                        onClick={() => removeFromCart(item.product_id)}
+                        onClick={() => { void removeFromCart(item.product_id); }}
                         aria-label="Удалить товар из корзины"
+                        disabled={isBusy}
                       >
                         <svg viewBox="0 0 24 24" className="cart-delete-icon" aria-hidden="true">
                           <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 12h12l1-14H5l1 14Z" />
@@ -250,8 +328,8 @@ const CartFunc: React.FC = () => {
                       <button
                         type="button"
                         className="cart-buy-action"
-                        onClick={() => buySingleItem(item.product_id)}
-                        disabled={buyingItemId !== null || !maxQuantity || maxQuantity <= 0}
+                        onClick={() => { void buySingleItem(item.product_id); }}
+                        disabled={isBusy || !maxQuantity || maxQuantity <= 0}
                       >
                         {buyingItemId === item.product_id ? 'Покупка...' : 'Купить'}
                       </button>
@@ -265,16 +343,16 @@ const CartFunc: React.FC = () => {
                     <div className="quantity-controls">
                       <button
                         type="button"
-                        onClick={() => updateQuantity(item.product_id, item.quantity - 1)}
-                        disabled={item.quantity <= 1}
+                        onClick={() => { void updateQuantity(item.product_id, item.quantity - 1); }}
+                        disabled={item.quantity <= 1 || isBusy}
                       >
                         -
                       </button>
                       <span>{item.quantity}</span>
                       <button
                         type="button"
-                        onClick={() => updateQuantity(item.product_id, item.quantity + 1)}
-                        disabled={!canIncrease}
+                        onClick={() => { void updateQuantity(item.product_id, item.quantity + 1); }}
+                        disabled={!canIncrease || isBusy}
                       >
                         +
                       </button>
@@ -304,10 +382,10 @@ const CartFunc: React.FC = () => {
           <button
             type="button"
             onClick={checkout}
-            disabled={loading || buyingItemId !== null || selectedItems.length === 0}
+            disabled={isBusy || selectedItems.length === 0}
             className="checkout-btn"
           >
-            {loading ? 'Оформление...' : 'Перейти к оформлению'}
+            Перейти к оформлению
           </button>
           <p className="cart-summary-hint">Доступны только выбранные товары.</p>
         </aside>

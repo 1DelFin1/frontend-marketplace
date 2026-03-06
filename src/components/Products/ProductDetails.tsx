@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiService } from '../../services/api';
-import { Product } from '../../types/product';
-import { CartItem, Seller } from '../../types/user';
+import { getProductImageUrls, Product } from '../../types/product';
+import { Seller } from '../../types/user';
+import { getUserFromToken } from '../../utils/auth';
 import mockStorePhoto from '../../assets/mock-store-photo.svg';
 
 const BASE_PRODUCT_DATA_KEYS = [
@@ -12,6 +13,7 @@ const BASE_PRODUCT_DATA_KEYS = [
   'price',
   'quantity',
   'category',
+  'photo_urls',
   'image_url',
 ];
 
@@ -44,11 +46,13 @@ const ProductDetails: React.FC = () => {
   const { productId } = useParams();
   const [product, setProduct] = useState<Product | null>(null);
   const [seller, setSeller] = useState<Seller | null>(null);
+  const [sellerOrdersCount, setSellerOrdersCount] = useState<number | null>(null);
   const [sellerLoading, setSellerLoading] = useState(false);
   const [sellerError, setSellerError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isFavorite, setIsFavorite] = useState(false);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   useEffect(() => {
     const loadProduct = async () => {
@@ -68,6 +72,7 @@ const ProductDetails: React.FC = () => {
       try {
         setLoading(true);
         setSeller(null);
+        setSellerOrdersCount(null);
         setSellerError('');
         const productData = await apiService.getProductById(numericProductId);
         setProduct(productData);
@@ -81,7 +86,16 @@ const ProductDetails: React.FC = () => {
         try {
           const sellerData = await apiService.getSellerById(productData.seller_id);
           setSeller(sellerData);
+          setSellerOrdersCount(typeof sellerData.orders_count === 'number' ? sellerData.orders_count : null);
+          const actualOrdersCount = await apiService.getSellerOrdersCount(
+            sellerData.id,
+            sellerData.orders_count ?? null
+          );
+          if (typeof actualOrdersCount === 'number') {
+            setSellerOrdersCount(actualOrdersCount);
+          }
         } catch {
+          setSellerOrdersCount(null);
           setSellerError('Не удалось загрузить данные продавца');
         } finally {
           setSellerLoading(false);
@@ -106,7 +120,7 @@ const ProductDetails: React.FC = () => {
     return Array.from(new Set([...BASE_PRODUCT_DATA_KEYS, ...propertyKeys]));
   }, [product]);
 
-  const addToCart = () => {
+  const addToCart = async () => {
     if (!product) {
       return;
     }
@@ -116,30 +130,29 @@ const ProductDetails: React.FC = () => {
       return;
     }
 
-    const savedCart = localStorage.getItem('cart');
-    const cart: { items: CartItem[]; total: number } = savedCart
-      ? JSON.parse(savedCart)
-      : { items: [], total: 0 };
-
-    const existingItem = cart.items.find((item) => item.product_id === product.id);
-
-    if (existingItem) {
-      existingItem.quantity += 1;
-    } else {
-      cart.items.push({
-        product_id: product.id,
-        quantity: 1,
-        product,
-      });
+    const tokenUser = getUserFromToken();
+    if (!tokenUser?.id) {
+      toast.error('Требуется авторизация');
+      return;
     }
 
-    cart.total = cart.items.reduce((total, item) => {
-      return total + (item.product?.price || 0) * item.quantity;
-    }, 0);
+    try {
+      const cartItems = await apiService.getCartByUserId(tokenUser.id);
+      const existingItem = cartItems.find((item) => item.product_id === product.id);
+      const updatedItems = existingItem
+        ? cartItems.map((item) => (
+          item.product_id === product.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        ))
+        : [...cartItems, { product_id: product.id, quantity: 1 }];
 
-    localStorage.setItem('cart', JSON.stringify(cart));
-    window.dispatchEvent(new Event('cart-updated'));
-    toast.success('Товар добавлен в корзину!');
+      await apiService.setCartByUserId(tokenUser.id, updatedItems);
+      window.dispatchEvent(new Event('cart-updated'));
+      toast.success('Товар добавлен в корзину!');
+    } catch {
+      toast.error('Не удалось добавить товар в корзину');
+    }
   };
 
   const toggleFavorite = () => {
@@ -155,12 +168,28 @@ const ProductDetails: React.FC = () => {
   }, [seller]);
 
   const formattedSellerOrdersCount = useMemo(() => {
-    if (!seller || typeof seller.orders_count !== 'number') {
+    if (sellerOrdersCount === null) {
       return '—';
     }
 
-    return seller.orders_count.toLocaleString('ru-RU');
+    return sellerOrdersCount.toLocaleString('ru-RU');
+  }, [sellerOrdersCount]);
+
+  const sellerPhotoUrl = useMemo(() => {
+    if (!seller || typeof seller.photo_url !== 'string') {
+      return mockStorePhoto;
+    }
+
+    const trimmedPhotoUrl = seller.photo_url.trim();
+    return trimmedPhotoUrl.length > 0 ? trimmedPhotoUrl : mockStorePhoto;
   }, [seller]);
+
+  const productImageUrls = useMemo(() => getProductImageUrls(product ?? undefined), [product]);
+  const selectedProductImageUrl = productImageUrls[selectedImageIndex] || productImageUrls[0];
+
+  useEffect(() => {
+    setSelectedImageIndex(0);
+  }, [product?.id, productImageUrls.length]);
 
   if (loading) {
     return <div className="loading">Загрузка товара...</div>;
@@ -180,8 +209,30 @@ const ProductDetails: React.FC = () => {
 
       <section className="product-detail-main">
         <div className="product-detail-gallery">
-          {product.image_url ? (
-            <img src={product.image_url} alt={product.name} />
+          {selectedProductImageUrl ? (
+            <>
+              <img src={selectedProductImageUrl} alt={product.name} className="product-gallery-main-image" />
+              {productImageUrls.length > 1 && (
+                <div className="product-gallery-thumbnails" aria-label="Все фото товара">
+                  {productImageUrls.map((imageUrl, index) => (
+                    <button
+                      key={`${imageUrl}-${index}`}
+                      type="button"
+                      className={`product-gallery-thumbnail-button ${index === selectedImageIndex ? 'active' : ''}`}
+                      onClick={() => setSelectedImageIndex(index)}
+                      aria-label={`Фото ${index + 1}`}
+                      aria-pressed={index === selectedImageIndex}
+                    >
+                      <img
+                        src={imageUrl}
+                        alt={`${product.name} — фото ${index + 1}`}
+                        className="product-gallery-thumbnail-image"
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           ) : (
             <div className="product-image-placeholder">Нет изображения</div>
           )}
@@ -250,9 +301,15 @@ const ProductDetails: React.FC = () => {
                 <div className="seller-head">
                   <div className="seller-store-photo-wrap">
                     <img
-                      src={mockStorePhoto}
+                      src={sellerPhotoUrl}
                       alt={`Фото магазина ${seller.name}`}
                       className="seller-store-photo"
+                      onError={(event) => {
+                        const image = event.currentTarget;
+                        if (image.src !== mockStorePhoto) {
+                          image.src = mockStorePhoto;
+                        }
+                      }}
                     />
                   </div>
                   <div className="seller-name">{seller.name}</div>

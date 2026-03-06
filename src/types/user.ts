@@ -7,6 +7,7 @@ export interface User {
   email: string;
   name: string;
   birthday?: string;
+  photo_url?: string;
   is_seller?: boolean;
   is_active: boolean;
   is_superuser: boolean;
@@ -26,6 +27,7 @@ export interface Seller {
   email: string;
   name: string;
   birthday?: string;
+  photo_url?: string;
   rating?: number;
   orders_count?: number;
   is_active: boolean;
@@ -74,6 +76,21 @@ export interface UserOrder {
   updated_at?: string;
 }
 
+export interface OrderCreateItem {
+  product_id: number;
+  quantity: number;
+}
+
+export interface OrderCreatePayload {
+  user_id: string;
+  order_items: OrderCreateItem[];
+}
+
+export interface OrderCreateResponse {
+  status: string;
+  order_id: string;
+}
+
 export interface UserWithOrders extends User {
   orders?: UserOrder[];
 }
@@ -82,6 +99,11 @@ export interface CartItem {
   product_id: number;
   quantity: number;
   product?: Product; // Будем подгружать данные товара
+}
+
+export interface CartApiItem {
+  product_id: number;
+  quantity: number;
 }
 
 export interface Cart {

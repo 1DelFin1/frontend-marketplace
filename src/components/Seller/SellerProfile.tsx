@@ -27,13 +27,20 @@ const toDateInputValue = (value?: string): string => {
   return parsed.toISOString().slice(0, 10);
 };
 
+const MOCK_SELLER_AVATAR = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff5e6"/><stop offset="1" stop-color="#ffe7cc"/></linearGradient></defs><rect width="240" height="240" rx="36" fill="url(#g)"/><circle cx="120" cy="92" r="42" fill="#fdba74"/><path d="M56 196c5-33 30-56 64-56s59 23 64 56" fill="#fb923c"/></svg>',
+)}`;
+
 const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
   const [seller, setSeller] = useState<Seller | null>(null);
+  const [sellerOrdersCount, setSellerOrdersCount] = useState<number | null>(null);
   const [formData, setFormData] = useState<SellerUpdate>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -43,12 +50,18 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
       try {
         const data = await apiService.getCurrentSeller();
         setSeller(data);
+        setSellerOrdersCount(typeof data.orders_count === 'number' ? data.orders_count : null);
+        const actualOrdersCount = await apiService.getSellerOrdersCount(data.id, data.orders_count ?? null);
+        if (typeof actualOrdersCount === 'number') {
+          setSellerOrdersCount(actualOrdersCount);
+        }
         setFormData({
           name: data.name,
           email: data.email,
           birthday: toDateInputValue(data.birthday),
         });
       } catch {
+        setSellerOrdersCount(null);
         setLoadError('Не удалось загрузить кабинет продавца');
         toast.error('Не удалось загрузить кабинет продавца');
       } finally {
@@ -59,12 +72,57 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
     void loadSeller();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (avatarPreviewUrl) {
+        URL.revokeObjectURL(avatarPreviewUrl);
+      }
+    };
+  }, [avatarPreviewUrl]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
       [name]: value,
     }));
+  };
+
+  const clearSelectedAvatar = () => {
+    setSelectedAvatarFile(null);
+    setAvatarPreviewUrl((previousUrl) => {
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
+      }
+      return null;
+    });
+  };
+
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Можно загружать только изображения');
+      return;
+    }
+
+    const maxFileSize = 5 * 1024 * 1024;
+    if (file.size > maxFileSize) {
+      toast.error('Размер фото не должен превышать 5 МБ');
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    setSelectedAvatarFile(file);
+    setAvatarPreviewUrl((previousUrl) => {
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
+      }
+      return previewUrl;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -76,13 +134,27 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
     setSaving(true);
     try {
       await apiService.updateSeller(seller.id, formData);
-      const freshData = await apiService.getCurrentSeller();
+      if (selectedAvatarFile) {
+        await apiService.uploadCurrentSellerPhoto(selectedAvatarFile);
+      }
+
+      const freshData = await apiService.getCurrentSeller(true);
       setSeller(freshData);
+      setSellerOrdersCount(typeof freshData.orders_count === 'number' ? freshData.orders_count : null);
+      const actualOrdersCount = await apiService.getSellerOrdersCount(
+        freshData.id,
+        freshData.orders_count ?? null,
+        true
+      );
+      if (typeof actualOrdersCount === 'number') {
+        setSellerOrdersCount(actualOrdersCount);
+      }
       setFormData({
         name: freshData.name,
         email: freshData.email,
         birthday: toDateInputValue(freshData.birthday),
       });
+      clearSelectedAvatar();
       toast.success('Данные продавца обновлены');
     } catch {
       toast.error('Ошибка при сохранении профиля продавца');
@@ -127,6 +199,12 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
     );
   }
 
+  const formattedSellerOrdersCount = sellerOrdersCount !== null ? sellerOrdersCount.toLocaleString('ru-RU') : '—';
+  const sellerAvatarUrl = typeof seller.photo_url === 'string' && seller.photo_url.trim().length > 0
+    ? seller.photo_url.trim()
+    : null;
+  const avatarUrl = avatarPreviewUrl || sellerAvatarUrl || MOCK_SELLER_AVATAR;
+
   return (
     <section className="seller-page seller-profile-page">
       <header className="seller-topbar">
@@ -151,6 +229,9 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
 
       <div className="seller-profile-grid">
         <article className="seller-card seller-profile-summary">
+          <div className="seller-profile-avatar-shell">
+            <img src={avatarUrl} alt={`Фото продавца ${seller.name}`} className="seller-profile-avatar-image" />
+          </div>
           <h1>Личный кабинет продавца</h1>
           <p>{seller.name}</p>
           <small>{seller.email}</small>
@@ -162,7 +243,7 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
             </div>
             <div>
               <span>Заказов</span>
-              <strong>{seller.orders_count ?? 0}</strong>
+              <strong>{formattedSellerOrdersCount}</strong>
             </div>
           </div>
         </article>
@@ -203,6 +284,31 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
                 value={formData.birthday || ''}
                 onChange={handleChange}
               />
+            </div>
+
+            <div className="form-group seller-photo-upload-group">
+              <label htmlFor="seller-photo">Фото профиля</label>
+              <input
+                id="seller-photo"
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarFileChange}
+              />
+              <small className="seller-photo-upload-hint">
+                PNG, JPG, WEBP, GIF или BMP. Максимум 5 МБ.
+              </small>
+              {selectedAvatarFile && (
+                <div className="seller-photo-upload-meta">
+                  <span>{selectedAvatarFile.name}</span>
+                  <button
+                    type="button"
+                    className="seller-photo-clear-btn"
+                    onClick={clearSelectedAvatar}
+                  >
+                    Убрать
+                  </button>
+                </div>
+              )}
             </div>
 
             <button type="submit" className="auth-button" disabled={saving}>

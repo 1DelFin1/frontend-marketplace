@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { apiService } from '../../services/api';
-import { Seller } from '../../types/user';
+import { Seller, UserOrder } from '../../types/user';
 import { getUserFromToken } from '../../utils/auth';
 
 const navigationItems = [
@@ -13,12 +13,21 @@ const navigationItems = [
   { label: 'Отзывы' },
 ];
 
-const trend = [74, 70, 72, 69, 71, 74, 76, 73, 68, 67, 62, 63, 75, 73, 45];
+const DASHBOARD_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const deliveredOrderStatuses = new Set(['delivered', 'completed']);
 
 const toPercent = (value: number): string => `${value.toFixed(1)}%`;
+const toDayStart = (date: Date): Date => {
+  const copy = new Date(date);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+};
 
 const SellerDashboard: React.FC = () => {
   const [seller, setSeller] = useState<Seller | null>(null);
+  const [sellerOrders, setSellerOrders] = useState<UserOrder[] | null>(null);
+  const [sellerOrdersCount, setSellerOrdersCount] = useState<number | null>(null);
   const location = useLocation();
 
   useEffect(() => {
@@ -26,8 +35,22 @@ const SellerDashboard: React.FC = () => {
       try {
         const data = await apiService.getCurrentSeller();
         setSeller(data);
+        setSellerOrdersCount(typeof data.orders_count === 'number' ? data.orders_count : null);
+        const orders = await apiService.getSellerOrders(data.id);
+        if (orders !== null) {
+          setSellerOrders(orders);
+          setSellerOrdersCount(orders.length);
+        } else {
+          setSellerOrders(null);
+          const actualOrdersCount = await apiService.getSellerOrdersCount(data.id, data.orders_count ?? null);
+          if (typeof actualOrdersCount === 'number') {
+            setSellerOrdersCount(actualOrdersCount);
+          }
+        }
       } catch {
         setSeller(null);
+        setSellerOrders(null);
+        setSellerOrdersCount(null);
       }
     };
 
@@ -37,21 +60,79 @@ const SellerDashboard: React.FC = () => {
   const fallbackName = getUserFromToken()?.name ?? 'Продавец';
   const sellerName = seller?.name || fallbackName;
 
+  const sellerOrdersStats = useMemo(() => {
+    const trendValues = Array.from({ length: DASHBOARD_DAYS }, () => 0);
+    if (!sellerOrders) {
+      return {
+        trendValues,
+        ordersInWindow: null,
+        deliveredInWindow: null,
+      };
+    }
+
+    const todayStart = toDayStart(new Date());
+    const windowStart = new Date(todayStart);
+    windowStart.setDate(windowStart.getDate() - (DASHBOARD_DAYS - 1));
+
+    let deliveredInWindow = 0;
+
+    sellerOrders.forEach((order) => {
+      const dateSource = order.created_at ?? order.updated_at;
+      if (!dateSource) {
+        return;
+      }
+
+      const orderDate = new Date(dateSource);
+      if (Number.isNaN(orderDate.getTime())) {
+        return;
+      }
+
+      const orderDay = toDayStart(orderDate);
+      const dayIndex = Math.floor((orderDay.getTime() - windowStart.getTime()) / DAY_MS);
+      if (dayIndex < 0 || dayIndex >= DASHBOARD_DAYS) {
+        return;
+      }
+
+      trendValues[dayIndex] += 1;
+      if (deliveredOrderStatuses.has(String(order.status || '').toLowerCase())) {
+        deliveredInWindow += 1;
+      }
+    });
+
+    return {
+      trendValues,
+      ordersInWindow: trendValues.reduce((sum, value) => sum + value, 0),
+      deliveredInWindow,
+    };
+  }, [sellerOrders]);
+
   const trendPoints = useMemo(() => {
-    const max = Math.max(...trend);
-    const min = Math.min(...trend);
-    return trend
+    const trendValues = sellerOrdersStats.trendValues;
+    const max = Math.max(...trendValues);
+    const min = Math.min(...trendValues);
+    return trendValues
       .map((value, index) => {
-        const x = (index / (trend.length - 1)) * 100;
-        const normalized = max === min ? 50 : ((value - min) / (max - min)) * 80;
+        const x = (index / (trendValues.length - 1)) * 100;
+        if (max === 0) {
+          return `${x},90`;
+        }
+
+        const normalized = max === min ? 80 : ((value - min) / (max - min)) * 80;
         const y = 90 - normalized;
         return `${x},${y}`;
       })
       .join(' ');
-  }, []);
+  }, [sellerOrdersStats]);
 
   const sellerRating = seller?.rating ?? 98.8;
-  const sellerOrdersCount = seller?.orders_count ?? 219;
+  const formattedSellerOrdersCount = sellerOrdersCount !== null ? sellerOrdersCount.toLocaleString('ru-RU') : '—';
+  const formattedOrdersInWindow = sellerOrdersStats.ordersInWindow !== null
+    ? sellerOrdersStats.ordersInWindow.toLocaleString('ru-RU')
+    : formattedSellerOrdersCount;
+  const formattedDeliveredInWindow = sellerOrdersStats.deliveredInWindow !== null
+    ? sellerOrdersStats.deliveredInWindow.toLocaleString('ru-RU')
+    : '—';
+  const ordersAnalyticsTitle = sellerOrdersStats.ordersInWindow !== null ? 'Заказы за 14 дней' : 'Заказы';
 
   return (
     <section className="seller-page">
@@ -95,7 +176,7 @@ const SellerDashboard: React.FC = () => {
         <div className="seller-main-column">
           <article className="seller-card seller-analytics-card">
             <div className="seller-card-head">
-              <h1>Заказано товаров за 14 дней</h1>
+              <h1>{ordersAnalyticsTitle}</h1>
               <span>Часовой пояс: UTC +3</span>
             </div>
             <div className="seller-chart-wrap" aria-label="График заказов">
@@ -106,11 +187,11 @@ const SellerDashboard: React.FC = () => {
             </div>
             <div className="seller-two-stats">
               <div>
-                <strong>61 169</strong>
-                <span>Заказано</span>
+                <strong>{formattedOrdersInWindow}</strong>
+                <span>Заказов</span>
               </div>
               <div>
-                <strong>47 757</strong>
+                <strong>{formattedDeliveredInWindow}</strong>
                 <span>Доставлено</span>
               </div>
             </div>
@@ -139,8 +220,8 @@ const SellerDashboard: React.FC = () => {
               <h2>Коммуникации</h2>
               <ul className="seller-list seller-list-with-badges">
                 <li>
-                  <span>Отзывы</span>
-                  <b>{sellerOrdersCount}</b>
+                  <span>Заказы</span>
+                  <b>{formattedSellerOrdersCount}</b>
                 </li>
                 <li>
                   <span>Сообщения</span>

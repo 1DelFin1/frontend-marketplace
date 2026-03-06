@@ -1,48 +1,73 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Product } from '../../types/product';
+import { getPrimaryProductImageUrl, Product } from '../../types/product';
 import { toast } from 'react-toastify';
-import { CartItem } from '../../types/user';
+import { apiService } from '../../services/api';
+import { getUserFromToken } from '../../utils/auth';
 
 interface ProductCardProps {
   product: Product;
+  cartQuantity?: number;
+  cartUpdating?: boolean;
+  onChangeCartQuantity?: (product: Product, nextQuantity: number) => Promise<void> | void;
 }
 
-const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
-  const addToCart = () => {
-    const savedCart = localStorage.getItem('cart');
-    const cart: { items: CartItem[]; total: number } = savedCart
-      ? JSON.parse(savedCart)
-      : { items: [], total: 0 };
+const ProductCard: React.FC<ProductCardProps> = ({
+  product,
+  cartQuantity = 0,
+  cartUpdating = false,
+  onChangeCartQuantity,
+}) => {
+  const productImageUrl = getPrimaryProductImageUrl(product);
+  const normalizedCartQuantity = Math.max(0, Math.trunc(cartQuantity));
+  const hasExternalCartControl = typeof onChangeCartQuantity === 'function';
+  const canIncreaseFromCart = product.quantity > 0 && normalizedCartQuantity < product.quantity;
 
-    const existingItem = cart.items.find((item) => item.product_id === product.id);
-
-    if (existingItem) {
-      existingItem.quantity += 1;
-    } else {
-      cart.items.push({
-        product_id: product.id,
-        quantity: 1,
-        product,
-      });
+  const changeExternalCartQuantity = async (nextQuantity: number) => {
+    if (!onChangeCartQuantity) {
+      return;
     }
 
-    // Пересчет общей суммы
-    cart.total = cart.items.reduce((total, item) => {
-      return total + (item.product?.price || 0) * item.quantity;
-    }, 0);
+    await onChangeCartQuantity(product, nextQuantity);
+  };
 
-    localStorage.setItem('cart', JSON.stringify(cart));
-    window.dispatchEvent(new Event('cart-updated'));
-    toast.success('Товар добавлен в корзину!');
+  const addToCart = async () => {
+    if (hasExternalCartControl) {
+      await changeExternalCartQuantity(normalizedCartQuantity + 1);
+      return;
+    }
+
+    const tokenUser = getUserFromToken();
+    if (!tokenUser?.id) {
+      toast.error('Требуется авторизация');
+      return;
+    }
+
+    try {
+      const cartItems = await apiService.getCartByUserId(tokenUser.id);
+      const existingItem = cartItems.find((item) => item.product_id === product.id);
+      const updatedItems = existingItem
+        ? cartItems.map((item) => (
+          item.product_id === product.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        ))
+        : [...cartItems, { product_id: product.id, quantity: 1 }];
+
+      await apiService.setCartByUserId(tokenUser.id, updatedItems);
+      window.dispatchEvent(new Event('cart-updated'));
+      toast.success('Товар добавлен в корзину!');
+    } catch {
+      toast.error('Не удалось добавить товар в корзину');
+    }
   };
 
   return (
     <div className="product-card">
       <Link to={`/products/${product.id}`} className="product-card-link">
         <div className="product-image">
-          {product.image_url ? (
-            <img src={product.image_url} alt={product.name} />
+          {productImageUrl ? (
+            <img src={productImageUrl} alt={product.name} />
           ) : (
             <div className="product-image-placeholder">Нет изображения</div>
           )}
@@ -66,13 +91,43 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       </Link>
 
       <div className="product-card-actions">
-        <button
-          className="add-to-cart-btn"
-          onClick={addToCart}
-          disabled={product.quantity === 0}
-        >
-          {product.quantity > 0 ? 'В корзину' : 'Нет в наличии'}
-        </button>
+        {hasExternalCartControl && normalizedCartQuantity > 0 ? (
+          <div className={`product-card-cart-controls ${cartUpdating ? 'is-updating' : ''}`}>
+            <button
+              type="button"
+              className="product-card-cart-btn"
+              onClick={() => {
+                void changeExternalCartQuantity(normalizedCartQuantity - 1);
+              }}
+              disabled={cartUpdating || normalizedCartQuantity <= 0}
+              aria-label="Уменьшить количество в корзине"
+            >
+              -
+            </button>
+            <span className="product-card-cart-qty">{normalizedCartQuantity}</span>
+            <button
+              type="button"
+              className="product-card-cart-btn"
+              onClick={() => {
+                void changeExternalCartQuantity(normalizedCartQuantity + 1);
+              }}
+              disabled={cartUpdating || !canIncreaseFromCart}
+              aria-label="Увеличить количество в корзине"
+            >
+              +
+            </button>
+          </div>
+        ) : (
+          <button
+            className="add-to-cart-btn"
+            onClick={() => {
+              void addToCart();
+            }}
+            disabled={product.quantity === 0 || cartUpdating}
+          >
+            {product.quantity > 0 ? 'В корзину' : 'Нет в наличии'}
+          </button>
+        )}
       </div>
     </div>
   );

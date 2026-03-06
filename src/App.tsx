@@ -7,6 +7,7 @@ import ProductDetails from './components/Products/ProductDetails';
 import StorePage from './components/Products/StorePage';
 import Profile from './components/Profile/Profile';
 import CartFunc from './components/Cart/cartFunc';
+import CheckoutPage from './components/Checkout/CheckoutPage';
 import Orders from './components/Orders/Orders';
 import SellerDashboard from './components/Seller/SellerDashboard';
 import SellerProfile from './components/Seller/SellerProfile';
@@ -58,24 +59,6 @@ const ACTIVE_ORDER_STATUSES = new Set([
   'delivered',
 ]);
 
-const getCartItemsCount = (): number => {
-  try {
-    const savedCart = localStorage.getItem('cart');
-    if (!savedCart) {
-      return 0;
-    }
-
-    const parsed = JSON.parse(savedCart) as { items?: Array<{ quantity?: number }> };
-    if (!Array.isArray(parsed.items)) {
-      return 0;
-    }
-
-    return parsed.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
-  } catch {
-    return 0;
-  }
-};
-
 const formatBadgeCount = (count: number): string => (count > 99 ? '99+' : String(count));
 
 interface AppContentProps {
@@ -94,8 +77,21 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [cartItemsCount, setCartItemsCount] = useState(0);
 
-  const refreshCartItemsCount = useCallback(() => {
-    setCartItemsCount(getCartItemsCount());
+  const refreshCartItemsCount = useCallback(async () => {
+    try {
+      const tokenUser = getUserFromToken();
+      const userId = tokenUser?.id;
+      if (!userId) {
+        setCartItemsCount(0);
+        return;
+      }
+
+      const cartItems = await apiService.getCartByUserId(userId);
+      const uniqueItemsCount = new Set(cartItems.map((item) => item.product_id)).size;
+      setCartItemsCount(uniqueItemsCount);
+    } catch {
+      setCartItemsCount(0);
+    }
   }, []);
 
   const refreshActiveOrdersCount = useCallback(async () => {
@@ -132,7 +128,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
       return;
     }
 
-    refreshCartItemsCount();
+    void refreshCartItemsCount();
     void refreshActiveOrdersCount();
   }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount]);
 
@@ -149,24 +145,17 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
       return;
     }
 
-    const handleStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === 'cart') {
-        refreshCartItemsCount();
-      }
-    };
     const handleCartUpdated = () => {
-      refreshCartItemsCount();
+      void refreshCartItemsCount();
     };
     const handleOrdersUpdated = () => {
       void refreshActiveOrdersCount();
     };
 
-    window.addEventListener('storage', handleStorage);
     window.addEventListener('cart-updated', handleCartUpdated as EventListener);
     window.addEventListener('orders-updated', handleOrdersUpdated as EventListener);
 
     return () => {
-      window.removeEventListener('storage', handleStorage);
       window.removeEventListener('cart-updated', handleCartUpdated as EventListener);
       window.removeEventListener('orders-updated', handleOrdersUpdated as EventListener);
     };
@@ -178,7 +167,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
         {!isAuthPage && !isSellerPage && (
           <header className="app-header">
             <nav className="main-nav">
-              <Link to="/products" className="nav-brand">маркетплейс</Link>
+              <Link to="/products" className="nav-brand">НеоМаркет</Link>
               <div className="header-search" role="search" aria-label="Поиск по товарам">
                 <input
                   type="text"
@@ -347,6 +336,18 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
                   <CartFunc />
+                ) :
+                <Navigate to="/login" replace />
+              }
+            />
+            <Route
+              path="/checkout"
+              element={
+                isAuthenticated ?
+                (
+                  isSellerAccount ?
+                  <Navigate to="/seller" replace /> :
+                  <CheckoutPage />
                 ) :
                 <Navigate to="/login" replace />
               }

@@ -27,7 +27,7 @@ const statusLabels: Record<string, string> = {
 const statusTones: Record<string, string> = {
   pending: 'pending',
   reserved: 'processing',
-  paid: 'processing',
+  paid: 'success',
   preparing: 'processing',
   shipping: 'processing',
   delivered: 'success',
@@ -75,6 +75,16 @@ const calculateOrderTotal = (order: UserOrder): number | null => {
   return order.order_items.reduce((acc, item) => acc + (item.price || 0) * item.quantity, 0);
 };
 
+const getSortedActiveOrders = (orders: UserOrder[]): UserOrder[] => {
+  return orders
+    .filter((order) => ACTIVE_ORDER_STATUSES.has(String(order.status || '').toLowerCase()))
+    .sort((a, b) => {
+      const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
+      const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
+      return bTime - aTime;
+    });
+};
+
 const getInitials = (name: string): string => {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
@@ -101,11 +111,22 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
   const [loggingOut, setLoggingOut] = useState(false);
   const [loading, setLoading] = useState(true);
   const [ordersLoading, setOrdersLoading] = useState(true);
+  const [payingOrderIds, setPayingOrderIds] = useState<Set<string>>(new Set());
+  const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     void fetchProfileData();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (avatarPreviewUrl) {
+        URL.revokeObjectURL(avatarPreviewUrl);
+      }
+    };
+  }, [avatarPreviewUrl]);
 
   const fetchProfileData = async () => {
     setLoading(true);
@@ -130,15 +151,7 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
         birthday: userData.birthday,
       });
 
-      const nextActiveOrders = userOrders
-        .filter((order) => ACTIVE_ORDER_STATUSES.has(String(order.status || '').toLowerCase()))
-        .sort((a, b) => {
-          const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
-          const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
-          return bTime - aTime;
-        });
-
-      setActiveOrders(nextActiveOrders);
+      setActiveOrders(getSortedActiveOrders(userOrders));
     } catch (error) {
       toast.error('Ошибка загрузки данных пользователя');
     } finally {
@@ -147,17 +160,49 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
     }
   };
 
+  const refreshActiveOrders = async (userId: string) => {
+    setOrdersLoading(true);
+    try {
+      const userOrders = await apiService.getOrdersByUserId(userId, true);
+      setActiveOrders(getSortedActiveOrders(userOrders));
+    } catch {
+      toast.error('Не удалось обновить список заказов');
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      return;
+    }
+
     setSaving(true);
 
     try {
-      if (user) {
-        const updatedUser = await apiService.updateUser(user.id, formData);
-        setUser(updatedUser);
-        setEditMode(false);
-        toast.success('Данные успешно обновлены');
+      await apiService.updateUser(user.id, formData);
+      let updatedUser = await apiService.getUserById(user.id);
+
+      if (selectedAvatarFile) {
+        updatedUser = await apiService.uploadCurrentUserPhoto(selectedAvatarFile);
       }
+
+      setUser(updatedUser);
+      setFormData({
+        name: updatedUser.name,
+        email: updatedUser.email,
+        birthday: updatedUser.birthday,
+      });
+      setSelectedAvatarFile(null);
+      setAvatarPreviewUrl((previousUrl) => {
+        if (previousUrl) {
+          URL.revokeObjectURL(previousUrl);
+        }
+        return null;
+      });
+      setEditMode(false);
+      toast.success('Данные успешно обновлены');
     } catch (error) {
       toast.error('Ошибка обновления данных');
     } finally {
@@ -170,6 +215,71 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
       ...prev,
       [e.target.name]: e.target.value,
     }));
+  };
+
+  const clearSelectedAvatar = () => {
+    setSelectedAvatarFile(null);
+    setAvatarPreviewUrl((previousUrl) => {
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
+      }
+      return null;
+    });
+  };
+
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Можно загружать только изображения');
+      return;
+    }
+
+    const maxFileSize = 5 * 1024 * 1024;
+    if (file.size > maxFileSize) {
+      toast.error('Размер фото не должен превышать 5 МБ');
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    setSelectedAvatarFile(file);
+    setAvatarPreviewUrl((previousUrl) => {
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
+      }
+      return previewUrl;
+    });
+  };
+
+  const handleStartEdit = () => {
+    if (!user) {
+      return;
+    }
+
+    setFormData({
+      name: user.name,
+      email: user.email,
+      birthday: user.birthday,
+    });
+    clearSelectedAvatar();
+    setEditMode(true);
+  };
+
+  const handleCancelEdit = () => {
+    if (!user) {
+      return;
+    }
+
+    setFormData({
+      name: user.name,
+      email: user.email,
+      birthday: user.birthday,
+    });
+    clearSelectedAvatar();
+    setEditMode(false);
   };
 
   const handleLogout = async () => {
@@ -193,6 +303,38 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
     navigate('/login', { replace: true });
   };
 
+  const handlePayOrder = async (orderId: string) => {
+    const tokenUser = getUserFromToken();
+    if (!tokenUser?.id) {
+      toast.error('Ошибка авторизации');
+      return;
+    }
+
+    if (payingOrderIds.has(orderId)) {
+      return;
+    }
+
+    setPayingOrderIds((prev) => {
+      const next = new Set(prev);
+      next.add(orderId);
+      return next;
+    });
+
+    try {
+      await apiService.confirmOrder(orderId);
+      toast.success('Заказ успешно оплачен');
+      await refreshActiveOrders(tokenUser.id);
+    } catch {
+      toast.error('Не удалось оплатить заказ');
+    } finally {
+      setPayingOrderIds((prev) => {
+        const next = new Set(prev);
+        next.delete(orderId);
+        return next;
+      });
+    }
+  };
+
   if (loading || !user) {
     return <div className="loading">Загрузка профиля...</div>;
   }
@@ -200,14 +342,18 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
   const birthdayValue = user.birthday
     ? new Date(user.birthday).toLocaleDateString('ru-RU')
     : 'Не указана';
+  const userAvatarUrl = typeof user.photo_url === 'string' && user.photo_url.trim().length > 0
+    ? user.photo_url.trim()
+    : null;
+  const avatarUrl = avatarPreviewUrl || userAvatarUrl || MOCK_AVATAR;
 
   return (
     <section className="profile-page">
       <div className="profile-hero-card">
         <div className="profile-avatar-shell">
           <img
-            src={MOCK_AVATAR}
-            alt={`Моковое фото пользователя ${user.name}`}
+            src={avatarUrl}
+            alt={`Фото пользователя ${user.name}`}
             className="profile-avatar-image"
           />
           <span className="profile-avatar-badge">{getInitials(user.name)}</span>
@@ -234,7 +380,7 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
           {!editMode && (
             <button
               type="button"
-              onClick={() => setEditMode(true)}
+              onClick={handleStartEdit}
               className="edit-btn profile-edit-trigger"
             >
               Редактировать
@@ -294,6 +440,31 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
                     onChange={handleChange}
                   />
                 </div>
+
+                <div className="form-group profile-form-group profile-photo-upload-group">
+                  <label htmlFor="profile-photo">Фото профиля</label>
+                  <input
+                    type="file"
+                    id="profile-photo"
+                    accept="image/*"
+                    onChange={handleAvatarFileChange}
+                  />
+                  <small className="profile-photo-upload-hint">
+                    PNG, JPG, WEBP, GIF или BMP. Максимум 5 МБ.
+                  </small>
+                  {selectedAvatarFile && (
+                    <div className="profile-photo-upload-meta">
+                      <span>{selectedAvatarFile.name}</span>
+                      <button
+                        type="button"
+                        onClick={clearSelectedAvatar}
+                        className="profile-photo-clear-btn"
+                      >
+                        Убрать
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="profile-actions">
@@ -306,7 +477,7 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditMode(false)}
+                  onClick={handleCancelEdit}
                   className="cancel-btn"
                 >
                   Отмена
@@ -358,6 +529,8 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
                 const statusLabel = statusLabels[statusKey] || statusLabels.unknown;
                 const statusTone = statusTones[statusKey] || statusTones.unknown;
                 const total = calculateOrderTotal(order);
+                const canPay = statusKey === 'reserved';
+                const isPaying = payingOrderIds.has(order.id);
 
                 return (
                   <article key={order.id} className="profile-order-card">
@@ -368,7 +541,19 @@ const Profile: React.FC<ProfileProps> = ({ onLogout }) => {
                     <p className="profile-order-date">{formatDate(order.updated_at || order.created_at)}</p>
                     <footer className="profile-order-footer">
                       <span>{order.order_items.length} поз.</span>
-                      <strong>{total !== null ? formatPrice(total) : 'Итог уточняется'}</strong>
+                      <div className="profile-order-footer-actions">
+                        {canPay && (
+                          <button
+                            type="button"
+                            className="profile-pay-order-button"
+                            disabled={isPaying}
+                            onClick={() => void handlePayOrder(order.id)}
+                          >
+                            {isPaying ? 'Оплата...' : 'Оплатить'}
+                          </button>
+                        )}
+                        <strong>{total !== null ? formatPrice(total) : 'Итог уточняется'}</strong>
+                      </div>
                     </footer>
                   </article>
                 );
