@@ -19,6 +19,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
 
 class ApiService {
   private inFlightProductsRequest: Promise<Product[]> | null = null;
+  private inFlightPendingProductsRequest: Promise<Product[]> | null = null;
   private inFlightProductByIdRequests = new Map<number, Promise<Product>>();
   private inFlightUserByIdRequests = new Map<string, Promise<User>>();
   private inFlightUserByIdRawRequests = new Map<string, Promise<unknown>>();
@@ -985,6 +986,27 @@ class ApiService {
     return this.inFlightProductsRequest;
   }
 
+  async getSellerProducts(sellerId: string): Promise<Product[]> {
+    const encodedSellerId = encodeURIComponent(sellerId);
+    return this.request<Product[]>(`/products?seller_id=${encodedSellerId}`, {
+      credentials: 'include',
+    });
+  }
+
+  async getPendingProductsForModeration(): Promise<Product[]> {
+    if (this.inFlightPendingProductsRequest) {
+      return this.inFlightPendingProductsRequest;
+    }
+
+    this.inFlightPendingProductsRequest = this.request<Product[]>('/products/moderation/pending', {
+      credentials: 'include',
+    }).finally(() => {
+      this.inFlightPendingProductsRequest = null;
+    });
+
+    return this.inFlightPendingProductsRequest;
+  }
+
   async getProductById(productId: number, forceRefresh = false): Promise<Product> {
     const cacheKey = Math.trunc(productId);
     const now = Date.now();
@@ -1092,6 +1114,7 @@ class ApiService {
     this.productByIdCache.clear();
     this.missingProductByIdCache.clear();
     this.inFlightProductByIdRequests.clear();
+    this.inFlightPendingProductsRequest = null;
     return created;
   }
 
@@ -1121,6 +1144,36 @@ class ApiService {
       expiresAt: Date.now() + 30_000,
     });
     this.inFlightProductByIdRequests.delete(Math.trunc(productId));
+  }
+
+  async approveProduct(productId: number): Promise<Product> {
+    const approvedProduct = await this.request<Product>(`/products/${productId}/approve`, {
+      method: 'PATCH',
+      credentials: 'include',
+    });
+
+    this.productByIdCache.set(Math.trunc(productId), {
+      data: approvedProduct,
+      expiresAt: Date.now() + 30_000,
+    });
+    this.missingProductByIdCache.delete(Math.trunc(productId));
+    this.inFlightPendingProductsRequest = null;
+    return approvedProduct;
+  }
+
+  async rejectProduct(productId: number): Promise<Product> {
+    const rejectedProduct = await this.request<Product>(`/products/${productId}/reject`, {
+      method: 'PATCH',
+      credentials: 'include',
+    });
+
+    this.productByIdCache.set(Math.trunc(productId), {
+      data: rejectedProduct,
+      expiresAt: Date.now() + 30_000,
+    });
+    this.missingProductByIdCache.delete(Math.trunc(productId));
+    this.inFlightPendingProductsRequest = null;
+    return rejectedProduct;
   }
 
   async getCategories(): Promise<Category[]> {

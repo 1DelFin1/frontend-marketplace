@@ -13,6 +13,7 @@ import FavoritesPage from './components/Favorites/FavoritesPage';
 import SellerDashboard from './components/Seller/SellerDashboard';
 import SellerProfile from './components/Seller/SellerProfile';
 import SellerProductsPage from './components/Seller/SellerProductsPage';
+import AdminModerationPage from './components/Admin/AdminModerationPage';
 import { apiService } from './services/api';
 import { isTokenValid, getUserFromToken } from './utils/auth';
 
@@ -65,9 +66,11 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
   const location = useLocation();
   const tokenUser = getUserFromToken();
   const isSellerAccount = tokenUser?.account_type === 'seller';
-  const defaultAuthRoute = isSellerAccount ? '/seller' : '/products';
+  const isAdminAccount = tokenUser?.account_type === 'admin';
+  const defaultAuthRoute = isSellerAccount ? '/seller' : (isAdminAccount ? '/admin' : '/products');
   const isAuthPage = location.pathname === '/login' || location.pathname === '/register';
   const isSellerPage = location.pathname.startsWith('/seller');
+  const isAdminPage = location.pathname.startsWith('/admin');
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [cartItemsCount, setCartItemsCount] = useState(0);
   const [favoritesItemsCount, setFavoritesItemsCount] = useState(0);
@@ -135,7 +138,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
       return;
     }
 
-    if (isSellerAccount) {
+    if (isSellerAccount || isAdminAccount) {
       setCartItemsCount(0);
       setActiveOrdersCount(0);
       setFavoritesItemsCount(0);
@@ -145,18 +148,18 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
     void refreshCartItemsCount();
     void refreshActiveOrdersCount();
     void refreshFavoritesItemsCount();
-  }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount, refreshFavoritesItemsCount]);
+  }, [isAuthenticated, isSellerAccount, isAdminAccount, refreshCartItemsCount, refreshActiveOrdersCount, refreshFavoritesItemsCount]);
 
   useEffect(() => {
-    if (!isAuthenticated || isSellerAccount || location.pathname !== '/orders') {
+    if (!isAuthenticated || isSellerAccount || isAdminAccount || location.pathname !== '/orders') {
       return;
     }
 
     void refreshActiveOrdersCount();
-  }, [isAuthenticated, isSellerAccount, location.pathname, refreshActiveOrdersCount]);
+  }, [isAuthenticated, isSellerAccount, isAdminAccount, location.pathname, refreshActiveOrdersCount]);
 
   useEffect(() => {
-    if (!isAuthenticated || isSellerAccount) {
+    if (!isAuthenticated || isSellerAccount || isAdminAccount) {
       return;
     }
 
@@ -179,12 +182,12 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
       window.removeEventListener('orders-updated', handleOrdersUpdated as EventListener);
       window.removeEventListener('favorites-updated', handleFavoritesUpdated as EventListener);
     };
-  }, [isAuthenticated, isSellerAccount, refreshCartItemsCount, refreshActiveOrdersCount, refreshFavoritesItemsCount]);
+  }, [isAuthenticated, isSellerAccount, isAdminAccount, refreshCartItemsCount, refreshActiveOrdersCount, refreshFavoritesItemsCount]);
 
   return (
     <div className="App">
       <div className="layout-shell">
-        {!isAuthPage && !isSellerPage && (
+        {!isAuthPage && !isSellerPage && !isAdminPage && (
           <header className="app-header">
             <nav className="main-nav">
               <Link to="/products" className="nav-brand">НеоМаркет</Link>
@@ -203,7 +206,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 </button>
               </div>
               <div className="header-actions">
-                {isAuthenticated && !isSellerAccount && (
+                {isAuthenticated && !isSellerAccount && !isAdminAccount && (
                   <>
                     <Link to="/profile" className="header-action">
                       <span className="header-action-icon-wrap">
@@ -276,7 +279,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <SellerDashboard /> :
-                  <Navigate to="/products" replace />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <Navigate to="/products" replace />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -288,7 +291,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <SellerProfile onLogout={handleLogout} /> :
-                  <Navigate to="/products" replace />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <Navigate to="/products" replace />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -300,7 +303,19 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <SellerProductsPage /> :
-                  <Navigate to="/products" replace />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <Navigate to="/products" replace />)
+                ) :
+                <Navigate to="/login" replace />
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                isAuthenticated ?
+                (
+                  isAdminAccount ?
+                  <AdminModerationPage onLogout={handleLogout} /> :
+                  (isSellerAccount ? <Navigate to="/seller" replace /> : <Navigate to="/products" replace />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -312,7 +327,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <ProductList />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <ProductList />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -324,7 +339,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <ProductDetails />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <ProductDetails />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -336,7 +351,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <StorePage />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <StorePage />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -348,7 +363,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <Profile onLogout={handleLogout} />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <Profile onLogout={handleLogout} />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -360,7 +375,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <CartFunc />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <CartFunc />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -372,7 +387,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <CheckoutPage />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <CheckoutPage />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -384,7 +399,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <Orders />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <Orders />)
                 ) :
                 <Navigate to="/login" replace />
               }
@@ -396,7 +411,7 @@ function AppContent({ isAuthenticated, handleLoginSuccess, handleLogout }: AppCo
                 (
                   isSellerAccount ?
                   <Navigate to="/seller" replace /> :
-                  <FavoritesPage />
+                  (isAdminAccount ? <Navigate to="/admin" replace /> : <FavoritesPage />)
                 ) :
                 <Navigate to="/login" replace />
               }

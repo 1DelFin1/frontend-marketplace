@@ -1,3 +1,5 @@
+export type ProductModerationStatus = 'pending' | 'approved' | 'rejected';
+
 export interface Product {
   id: number;        // Изменил string на number (судя по схеме)
   photo_urls?: Record<string, string>;
@@ -13,6 +15,7 @@ export interface Product {
   created_at?: string;
   updated_at?: string;
   is_active?: boolean;
+  status?: ProductModerationStatus;
 }
 
 export interface ProductCreate {

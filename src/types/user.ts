@@ -1,6 +1,6 @@
 import { Product } from "./product";
 
-export type AccountType = "user" | "seller";
+export type AccountType = "user" | "seller" | "admin";
 
 export interface User {
   id: string;

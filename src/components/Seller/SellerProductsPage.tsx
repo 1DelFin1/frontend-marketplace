@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiService } from '../../services/api';
-import { Product, ProductCreate, ProductUpdate } from '../../types/product';
+import { Product, ProductCreate, ProductModerationStatus, ProductUpdate } from '../../types/product';
 import { Category } from '../../types/category';
 import { Seller } from '../../types/user';
 import { getUserFromToken } from '../../utils/auth';
@@ -90,7 +90,16 @@ const formatPrice = (price: number): string => {
   }).format(price);
 };
 
-const isProductOnSale = (product: Product): boolean => product.is_active !== false;
+const getProductModerationStatus = (product: Product): ProductModerationStatus => {
+  const rawStatus = typeof product.status === 'string' ? product.status.trim().toLowerCase() : '';
+  if (rawStatus === 'pending' || rawStatus === 'approved' || rawStatus === 'rejected') {
+    return rawStatus;
+  }
+  return 'approved';
+};
+
+const isProductApproved = (product: Product): boolean => getProductModerationStatus(product) === 'approved';
+const isProductOnSale = (product: Product): boolean => isProductApproved(product) && product.is_active !== false;
 const isProductActive = (product: Product): boolean => isProductOnSale(product);
 
 type ProductFilterTab = 'all' | 'active' | 'inactive';
@@ -167,9 +176,8 @@ const SellerProductsPage: React.FC = () => {
   };
 
   const loadProductsBySeller = async (sellerId: string) => {
-    const productsData = await apiService.getProducts();
+    const productsData = await apiService.getSellerProducts(sellerId);
     const sellerProducts = productsData
-      .filter((product) => product.seller_id === sellerId)
       .sort((a, b) => b.id - a.id);
 
     setProducts(sellerProducts);
@@ -437,7 +445,7 @@ const SellerProductsPage: React.FC = () => {
       setFormData(createInitialFormState(String(categoryId)));
       setSelectedPhotos([]);
       setProductUploadUuid(createProductUuid());
-      toast.success('Новый товар создан');
+      toast.success('Товар создан и отправлен на модерацию');
     } catch {
       toast.error('Не удалось создать товар');
     } finally {
@@ -645,9 +653,21 @@ const SellerProductsPage: React.FC = () => {
                   </div>
 
                   {filteredProducts.map((product) => {
+                    const moderationStatus = getProductModerationStatus(product);
                     const onSale = isProductOnSale(product);
+                    const canManageSaleStatus = moderationStatus === 'approved';
                     const isSelected = selectedProductIdsSet.has(product.id);
                     const saleActionInProgress = deactivatingProductIds.includes(product.id);
+                    const statusText = moderationStatus === 'pending'
+                      ? 'На модерации'
+                      : (moderationStatus === 'rejected'
+                        ? 'Отклонён'
+                        : (onSale ? 'Активен' : 'Неактивен'));
+                    const statusClass = moderationStatus === 'pending'
+                      ? 'pending'
+                      : (moderationStatus === 'rejected'
+                        ? 'rejected'
+                        : (onSale ? 'in-stock' : 'off-sale'));
 
                     return (
                       <div key={product.id} className={`seller-products-row ${isSelected ? 'selected' : ''}`}>
@@ -663,8 +683,8 @@ const SellerProductsPage: React.FC = () => {
                         <span>{getCategoryName(product.category_id)}</span>
                         <span className="seller-product-price">{formatPrice(product.price)}</span>
                         <span>{product.quantity} шт.</span>
-                        <span className={`seller-stock-badge ${onSale ? 'in-stock' : 'off-sale'}`}>
-                          {onSale ? 'Активен' : 'Неактивен'}
+                        <span className={`seller-stock-badge ${statusClass}`}>
+                          {statusText}
                         </span>
                         <div className="seller-product-actions">
                           <button
@@ -679,9 +699,13 @@ const SellerProductsPage: React.FC = () => {
                             type="button"
                             className={`seller-product-sale-btn ${onSale ? 'danger' : 'success'}`}
                             onClick={() => handleProductSaleStatusChange(product, !onSale)}
-                            disabled={updating || saleActionInProgress}
+                            disabled={updating || saleActionInProgress || !canManageSaleStatus}
                           >
-                            {saleActionInProgress ? 'Сохраняем...' : onSale ? 'Снять' : 'Вернуть'}
+                            {saleActionInProgress
+                              ? 'Сохраняем...'
+                              : (!canManageSaleStatus
+                                ? 'Недоступно'
+                                : (onSale ? 'Снять' : 'Вернуть'))}
                           </button>
                         </div>
                       </div>
