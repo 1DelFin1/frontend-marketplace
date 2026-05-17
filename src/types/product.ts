@@ -16,6 +16,8 @@ export interface Product {
   updated_at?: string;
   is_active?: boolean;
   status?: ProductModerationStatus;
+  rating?: number;
+  total_reviews?: number;
 }
 
 export interface ProductCreate {

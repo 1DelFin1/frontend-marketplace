@@ -10,6 +10,9 @@ interface ProductCardProps {
   cartQuantity?: number;
   cartUpdating?: boolean;
   onChangeCartQuantity?: (product: Product, nextQuantity: number) => Promise<void> | void;
+  isFavorite?: boolean;
+  favoriteUpdating?: boolean;
+  onToggleFavorite?: (product: Product) => Promise<void> | void;
 }
 
 const ProductCard: React.FC<ProductCardProps> = ({
@@ -17,11 +20,30 @@ const ProductCard: React.FC<ProductCardProps> = ({
   cartQuantity = 0,
   cartUpdating = false,
   onChangeCartQuantity,
+  isFavorite = false,
+  favoriteUpdating = false,
+  onToggleFavorite,
 }) => {
   const productImageUrl = getPrimaryProductImageUrl(product);
   const normalizedCartQuantity = Math.max(0, Math.trunc(cartQuantity));
   const hasExternalCartControl = typeof onChangeCartQuantity === 'function';
+  const hasFavoriteControl = typeof onToggleFavorite === 'function';
   const canIncreaseFromCart = product.quantity > 0 && normalizedCartQuantity < product.quantity;
+  const normalizedRating = (
+    typeof product.rating === 'number'
+    && Number.isFinite(product.rating)
+    && product.rating >= 0
+    && product.rating <= 5
+  )
+    ? product.rating
+    : null;
+  const normalizedReviewsCount = (
+    typeof product.total_reviews === 'number'
+    && Number.isFinite(product.total_reviews)
+    && product.total_reviews >= 0
+  )
+    ? Math.trunc(product.total_reviews)
+    : 0;
 
   const changeExternalCartQuantity = async (nextQuantity: number) => {
     if (!onChangeCartQuantity) {
@@ -64,6 +86,25 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   return (
     <div className="product-card">
+      {hasFavoriteControl && (
+        <button
+          type="button"
+          className={`product-card-favorite-btn ${isFavorite ? 'active' : ''}`}
+          onClick={() => {
+            if (!onToggleFavorite) {
+              return;
+            }
+            void onToggleFavorite(product);
+          }}
+          disabled={favoriteUpdating}
+          aria-label={isFavorite ? 'Убрать из избранного' : 'Добавить в избранное'}
+        >
+          <svg viewBox="0 0 24 24" className="product-card-favorite-icon" aria-hidden="true">
+            <path d="M12 20.25c-.27 0-.54-.09-.76-.26-4.04-3.03-7.24-5.64-7.24-9.42 0-2.67 2.08-4.72 4.76-4.72 1.46 0 2.86.66 3.76 1.78.9-1.12 2.3-1.78 3.76-1.78 2.68 0 4.76 2.05 4.76 4.72 0 3.78-3.2 6.39-7.24 9.42-.22.17-.49.26-.76.26z" />
+          </svg>
+        </button>
+      )}
+
       <Link to={`/products/${product.id}`} className="product-card-link">
         <div className="product-image">
           {productImageUrl ? (
@@ -80,6 +121,16 @@ const ProductCard: React.FC<ProductCardProps> = ({
           {product.category && (
             <div className="product-category">Категория: {product.category}</div>
           )}
+
+          <div className="product-rating" aria-label="Рейтинг товара">
+            <span className="product-rating-star" aria-hidden="true">★</span>
+            <span className="product-rating-value">
+              {normalizedRating === null ? '—' : normalizedRating.toFixed(1)}
+            </span>
+            <span className="product-rating-count">
+              ({normalizedReviewsCount.toLocaleString('ru-RU')})
+            </span>
+          </div>
 
           <div className="product-details">
             <div className={`product-quantity ${product.quantity > 0 ? 'in-stock' : 'out-of-stock'}`}>

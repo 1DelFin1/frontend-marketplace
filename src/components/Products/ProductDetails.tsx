@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiService } from '../../services/api';
 import { getProductImageUrls, Product } from '../../types/product';
+import { Review } from '../../types/review';
 import { Seller } from '../../types/user';
 import { getUserFromToken } from '../../utils/auth';
 import mockStorePhoto from '../../assets/mock-store-photo.svg';
@@ -16,6 +17,9 @@ const BASE_PRODUCT_DATA_KEYS = [
   'photo_urls',
   'image_url',
 ];
+
+const COMMENT_MAX_LENGTH = 255;
+const DEFAULT_COMMENT_RATING = 5;
 
 const extractPropertiesKeys = (properties: Product['properties']): string[] => {
   if (!properties) {
@@ -42,6 +46,21 @@ const extractPropertiesKeys = (properties: Product['properties']): string[] => {
   return [];
 };
 
+const sortReviews = (reviews: Review[]): Review[] => {
+  return [...reviews].sort((first, second) => {
+    const firstDate = Date.parse(first.created_at ?? '');
+    const secondDate = Date.parse(second.created_at ?? '');
+    const normalizedFirstDate = Number.isNaN(firstDate) ? 0 : firstDate;
+    const normalizedSecondDate = Number.isNaN(secondDate) ? 0 : secondDate;
+
+    if (normalizedFirstDate === normalizedSecondDate) {
+      return second.id - first.id;
+    }
+
+    return normalizedSecondDate - normalizedFirstDate;
+  });
+};
+
 const ProductDetails: React.FC = () => {
   const { productId } = useParams();
   const [product, setProduct] = useState<Product | null>(null);
@@ -54,6 +73,20 @@ const ProductDetails: React.FC = () => {
   const [isFavorite, setIsFavorite] = useState(false);
   const [favoriteUpdating, setFavoriteUpdating] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsError, setReviewsError] = useState('');
+  const [reviewText, setReviewText] = useState('');
+  const [reviewRating, setReviewRating] = useState(DEFAULT_COMMENT_RATING);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewAuthorNames, setReviewAuthorNames] = useState<Record<string, string>>({});
+
+  const tokenUser = getUserFromToken();
+  const canCreateComment = Boolean(
+    tokenUser?.id
+    && tokenUser.account_type !== 'seller'
+    && tokenUser.account_type !== 'admin'
+  );
 
   useEffect(() => {
     const loadProduct = async () => {
@@ -109,8 +142,96 @@ const ProductDetails: React.FC = () => {
       }
     };
 
-    loadProduct();
+    void loadProduct();
   }, [productId]);
+
+  useEffect(() => {
+    if (!product?.id) {
+      setReviews([]);
+      setReviewsError('');
+      setReviewsLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+    const loadReviews = async () => {
+      setReviewsLoading(true);
+      setReviewsError('');
+
+      try {
+        const serverReviews = await apiService.getReviewsByProductId(product.id);
+        if (isCancelled) {
+          return;
+        }
+
+        setReviews(sortReviews(serverReviews));
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+
+        setReviews([]);
+        setReviewsError('Не удалось загрузить комментарии');
+      } finally {
+        if (!isCancelled) {
+          setReviewsLoading(false);
+        }
+      }
+    };
+
+    void loadReviews();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [product?.id]);
+
+  useEffect(() => {
+    const unknownAuthorIds = Array.from(
+      new Set(
+        reviews
+          .filter((review) => !review.user_name)
+          .map((review) => review.user_id)
+          .filter((userId) => userId.length > 0 && !reviewAuthorNames[userId])
+      )
+    );
+
+    if (unknownAuthorIds.length === 0) {
+      return;
+    }
+
+    let isCancelled = false;
+    const loadAuthorNames = async () => {
+      const results = await Promise.allSettled(
+        unknownAuthorIds.map((userId) => apiService.getUserById(userId))
+      );
+
+      if (isCancelled) {
+        return;
+      }
+
+      setReviewAuthorNames((previous) => {
+        const next = { ...previous };
+        let hasChanges = false;
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled' && result.value.name.trim().length > 0) {
+            const normalizedName = result.value.name.trim();
+            if (next[unknownAuthorIds[index]] !== normalizedName) {
+              next[unknownAuthorIds[index]] = normalizedName;
+              hasChanges = true;
+            }
+          }
+        });
+        return hasChanges ? next : previous;
+      });
+    };
+
+    void loadAuthorNames();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [reviews, reviewAuthorNames]);
 
   const productDataKeys = useMemo(() => {
     if (!product) {
@@ -131,7 +252,6 @@ const ProductDetails: React.FC = () => {
       return;
     }
 
-    const tokenUser = getUserFromToken();
     if (!tokenUser?.id) {
       toast.error('Требуется авторизация');
       return;
@@ -163,7 +283,6 @@ const ProductDetails: React.FC = () => {
         return;
       }
 
-      const tokenUser = getUserFromToken();
       if (!tokenUser?.id) {
         setIsFavorite(false);
         return;
@@ -178,14 +297,13 @@ const ProductDetails: React.FC = () => {
     };
 
     void loadFavoriteStatus();
-  }, [product?.id]);
+  }, [product?.id, tokenUser?.id]);
 
   const toggleFavorite = async () => {
     if (!product?.id || favoriteUpdating) {
       return;
     }
 
-    const tokenUser = getUserFromToken();
     if (!tokenUser?.id) {
       toast.error('Требуется авторизация');
       return;
@@ -207,6 +325,77 @@ const ProductDetails: React.FC = () => {
       toast.error('Не удалось обновить избранное');
     } finally {
       setFavoriteUpdating(false);
+    }
+  };
+
+  const submitReview = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!product?.id) {
+      return;
+    }
+
+    if (!tokenUser?.id) {
+      toast.error('Требуется авторизация');
+      return;
+    }
+
+    if (!canCreateComment) {
+      toast.info('Комментарии доступны только покупателям');
+      return;
+    }
+
+    const normalizedText = reviewText.trim();
+    if (!normalizedText) {
+      toast.error('Введите текст комментария');
+      return;
+    }
+
+    if (normalizedText.length > COMMENT_MAX_LENGTH) {
+      toast.error(`Комментарий не должен превышать ${COMMENT_MAX_LENGTH} символов`);
+      return;
+    }
+
+    setReviewSubmitting(true);
+    try {
+      await apiService.createReview({
+        user_id: tokenUser.id,
+        product_id: product.id,
+        text: normalizedText,
+        rating: reviewRating,
+      });
+
+      const serverReviews = await apiService.getReviewsByProductId(product.id, true);
+      setReviews(sortReviews(serverReviews));
+
+      if (tokenUser.name.trim().length > 0) {
+        setReviewAuthorNames((previous) => ({
+          ...previous,
+          [tokenUser.id]: tokenUser.name.trim(),
+        }));
+      }
+
+      setReviewText('');
+      setReviewRating(DEFAULT_COMMENT_RATING);
+      toast.success('Комментарий отправлен');
+
+      try {
+        const updatedProduct = await apiService.getProductById(product.id, true);
+        setProduct(updatedProduct);
+      } catch {
+        // Ignore product refresh errors after a successful comment submission.
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('status: 400')) {
+        toast.error('Комментарий могут оставлять только покупатели этого товара');
+      } else if (errorMessage.includes('status: 409')) {
+        toast.error('Вы уже оставляли комментарий для этого товара');
+      } else {
+        toast.error('Не удалось отправить комментарий');
+      }
+    } finally {
+      setReviewSubmitting(false);
     }
   };
 
@@ -237,6 +426,105 @@ const ProductDetails: React.FC = () => {
 
   const productImageUrls = useMemo(() => getProductImageUrls(product ?? undefined), [product]);
   const selectedProductImageUrl = productImageUrls[selectedImageIndex] || productImageUrls[0];
+
+  const displayedProductRating = useMemo(() => {
+    if (reviews.length > 0) {
+      const sum = reviews.reduce((accumulator, review) => accumulator + review.rating, 0);
+      return sum / reviews.length;
+    }
+
+    if (typeof product?.rating === 'number' && Number.isFinite(product.rating)) {
+      return product.rating;
+    }
+
+    return null;
+  }, [product?.rating, reviews]);
+
+  const displayedReviewsCount = useMemo(() => {
+    if (reviews.length > 0) {
+      return reviews.length;
+    }
+
+    const productReviewsCount = (
+      typeof product?.total_reviews === 'number'
+      && Number.isFinite(product.total_reviews)
+      && product.total_reviews >= 0
+    )
+      ? Math.trunc(product.total_reviews)
+      : 0;
+
+    return productReviewsCount;
+  }, [product?.total_reviews, reviews.length]);
+
+  const formattedProductRating = useMemo(() => {
+    return displayedProductRating === null ? '—' : displayedProductRating.toFixed(1);
+  }, [displayedProductRating]);
+
+  const formattedReviewsCount = useMemo(() => {
+    return displayedReviewsCount.toLocaleString('ru-RU');
+  }, [displayedReviewsCount]);
+
+  const ratingBreakdown = useMemo(() => {
+    const countsByScore: Record<number, number> = {
+      1: 0,
+      2: 0,
+      3: 0,
+      4: 0,
+      5: 0,
+    };
+
+    reviews.forEach((review) => {
+      const normalizedScore = Math.max(1, Math.min(5, Math.round(review.rating)));
+      countsByScore[normalizedScore] += 1;
+    });
+
+    const total = reviews.length;
+    return [5, 4, 3, 2, 1].map((score) => ({
+      score,
+      count: countsByScore[score],
+      percent: total > 0 ? (countsByScore[score] / total) * 100 : 0,
+    }));
+  }, [reviews]);
+
+  const reviewDateFormatter = useMemo(() => {
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }, []);
+
+  const resolveReviewAuthorName = (review: Review): string => {
+    if (typeof review.user_name === 'string' && review.user_name.trim().length > 0) {
+      return review.user_name.trim();
+    }
+
+    if (review.user_id === tokenUser?.id) {
+      return tokenUser.name.trim().length > 0 ? tokenUser.name.trim() : 'Вы';
+    }
+
+    const cachedAuthorName = reviewAuthorNames[review.user_id];
+    if (typeof cachedAuthorName === 'string' && cachedAuthorName.trim().length > 0) {
+      return cachedAuthorName.trim();
+    }
+
+    return 'Пользователь';
+  };
+
+  const formatReviewDate = (rawDate?: string): string | null => {
+    if (!rawDate) {
+      return null;
+    }
+
+    const parsedDate = Date.parse(rawDate);
+    if (Number.isNaN(parsedDate)) {
+      return null;
+    }
+
+    return reviewDateFormatter.format(new Date(parsedDate));
+  };
 
   useEffect(() => {
     setSelectedImageIndex(0);
@@ -344,49 +632,204 @@ const ProductDetails: React.FC = () => {
             </div>
           </aside>
 
-          <aside className="seller-panel">
-            <h3>Продавец</h3>
-            {sellerLoading && (
-              <div className="seller-panel-state">Загрузка данных продавца...</div>
-            )}
+          <div className="seller-section">
+            <h3 className="seller-panel-title">Магазин</h3>
+            <aside className="seller-panel">
+              {sellerLoading && (
+                <div className="seller-panel-state">Загрузка данных продавца...</div>
+              )}
 
-            {!sellerLoading && seller && (
-              <>
-                <div className="seller-head">
-                  <div className="seller-store-photo-wrap">
-                    <img
-                      src={sellerPhotoUrl}
-                      alt={`Фото магазина ${seller.name}`}
-                      className="seller-store-photo"
-                      onError={(event) => {
-                        const image = event.currentTarget;
-                        if (image.src !== mockStorePhoto) {
-                          image.src = mockStorePhoto;
-                        }
+              {!sellerLoading && seller && (
+                <>
+                  <div className="product-seller-card">
+                    <div className="product-seller-card-header">
+                      <div className="product-seller-head">
+                        <div className="product-seller-store-photo-wrap">
+                          <img
+                            src={sellerPhotoUrl}
+                            alt={`Фото магазина ${seller.name}`}
+                            className="product-seller-store-photo"
+                            onError={(event) => {
+                              const image = event.currentTarget;
+                              if (image.src !== mockStorePhoto) {
+                                image.src = mockStorePhoto;
+                              }
+                            }}
+                          />
+                        </div>
+                        <div className="product-seller-head-main">
+                          <div className="product-seller-name">{seller.name}</div>
+                          <Link to={`/store/${seller.id}`} className="product-seller-go-link">
+                            Перейти
+                          </Link>
+                        </div>
+                      </div>
+                      <div className="product-seller-card-side">
+                        <div className="product-seller-rating-pill">
+                          <span className="product-seller-rating-star" aria-hidden="true">★</span>
+                          <strong>{formattedSellerRating}</strong>
+                        </div>
+                        <button
+                          type="button"
+                          className="product-seller-chat-pill"
+                          aria-label={`Чат с магазином ${seller.name}`}
+                        >
+                          Чат
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="product-seller-card-row">
+                      <span>Заказы</span>
+                      <strong>{formattedSellerOrdersCount}</strong>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="product-seller-about-button"
+                      onClick={() => {
+                        toast.info(`Магазин: ${seller.name}`);
                       }}
-                    />
+                    >
+                      О магазине
+                    </button>
                   </div>
-                  <div className="seller-name">{seller.name}</div>
+                </>
+              )}
+
+              {!sellerLoading && !seller && sellerError && (
+                <div className="seller-panel-state seller-panel-state-error">
+                  {sellerError}
                 </div>
-                <div className="seller-meta">
-                  <div className="seller-meta-item">
-                    <strong>{formattedSellerRating}</strong>
-                    <span>Рейтинг</span>
-                  </div>
-                  <div className="seller-meta-item">
-                    <strong>{formattedSellerOrdersCount}</strong>
-                    <span>Заказов</span>
-                  </div>
-                </div>
-                <Link to={`/store/${seller.id}`} className="seller-store-button">
-                  Перейти в магазин
-                </Link>
-              </>
+              )}
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section className="product-comments-section">
+        <div className="product-comments-heading">
+          <h2>Комментарии</h2>
+        </div>
+
+        <div className="product-comments-layout">
+          <div className="product-comments-main">
+            {reviewsLoading && (
+              <div className="product-comments-state">Загрузка комментариев...</div>
             )}
 
-            {!sellerLoading && !seller && sellerError && (
-              <div className="seller-panel-state seller-panel-state-error">
-                {sellerError}
+            {!reviewsLoading && reviewsError && (
+              <div className="product-comments-state product-comments-state-error">{reviewsError}</div>
+            )}
+
+            {!reviewsLoading && reviews.length === 0 && (
+              <div className="product-comments-state">Пока нет комментариев. Будьте первым, кто оставит отзыв.</div>
+            )}
+
+            {reviews.length > 0 && (
+              <div className="product-comments-list">
+                {reviews.map((review) => {
+                  const formattedDate = formatReviewDate(review.created_at);
+                  return (
+                    <article key={`${review.id}-${review.user_id}`} className="product-comment-card">
+                      <div className="product-comment-top">
+                        <div className="product-comment-author">{resolveReviewAuthorName(review)}</div>
+                        <div className="product-comment-rating-value">
+                          {Number.isInteger(review.rating) ? review.rating.toFixed(0) : review.rating.toFixed(1)} / 5
+                        </div>
+                      </div>
+                      {formattedDate && (
+                        <div className="product-comment-date">{formattedDate}</div>
+                      )}
+                      <p className="product-comment-text">{review.text}</p>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="product-comment-form-wrap">
+              <h3>Оставить комментарий</h3>
+              {!tokenUser?.id && (
+                <p className="product-comment-form-note">
+                  Чтобы оставить комментарий, войдите в аккаунт.
+                </p>
+              )}
+              {tokenUser?.id && !canCreateComment && (
+                <p className="product-comment-form-note">
+                  Комментарии доступны только покупателям.
+                </p>
+              )}
+              <form className="product-comment-form" onSubmit={submitReview}>
+                <div className="product-comment-form-row">
+                  <label htmlFor="review-rating">Оценка</label>
+                  <select
+                    id="review-rating"
+                    value={reviewRating}
+                    onChange={(event) => {
+                      setReviewRating(Number(event.target.value));
+                    }}
+                    disabled={!canCreateComment || reviewSubmitting}
+                  >
+                    {[5, 4, 3, 2, 1].map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="product-comment-form-row">
+                  <label htmlFor="review-text">Комментарий</label>
+                  <textarea
+                    id="review-text"
+                    value={reviewText}
+                    onChange={(event) => {
+                      setReviewText(event.target.value);
+                    }}
+                    maxLength={COMMENT_MAX_LENGTH}
+                    placeholder="Напишите, что вам понравилось или не понравилось в товаре"
+                    disabled={!canCreateComment || reviewSubmitting}
+                  />
+                  <div className="product-comment-counter">
+                    {reviewText.length}/{COMMENT_MAX_LENGTH}
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  className="product-comment-submit"
+                  disabled={!canCreateComment || reviewSubmitting}
+                >
+                  {reviewSubmitting ? 'Отправка...' : 'Отправить комментарий'}
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <aside className="product-comments-stats">
+            <div className="product-comments-metrics">
+              <div className="product-comments-metric-item">
+                <span>Рейтинг</span>
+                <strong>{formattedProductRating}</strong>
+              </div>
+              <div className="product-comments-metric-item">
+                <span>Комментариев</span>
+                <strong>{formattedReviewsCount}</strong>
+              </div>
+            </div>
+            {reviews.length > 0 && (
+              <div className="product-rating-breakdown" aria-label="Распределение оценок">
+                {ratingBreakdown.map((item) => (
+                  <div key={item.score} className="product-rating-breakdown-row">
+                    <span className="product-rating-breakdown-label">{item.score}★</span>
+                    <div className="product-rating-breakdown-track">
+                      <span
+                        className="product-rating-breakdown-fill"
+                        style={{ width: `${item.percent}%` }}
+                      />
+                    </div>
+                    <span className="product-rating-breakdown-count">{item.count}</span>
+                  </div>
+                ))}
               </div>
             )}
           </aside>

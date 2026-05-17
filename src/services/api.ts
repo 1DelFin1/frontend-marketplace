@@ -13,7 +13,8 @@ import {
   OrderCreateResponse,
 } from '../types/user';
 import { Product, ProductCreate, ProductUpdate } from '../types/product';
-import { Category, CategoryCreate } from '../types/category';
+import { Category, CategoryCreate, CategoryUpdate } from '../types/category';
+import { Review, ReviewCreatePayload } from '../types/review';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost';
 
@@ -27,11 +28,13 @@ class ApiService {
   private inFlightOrdersRequests = new Map<string, Promise<UserOrder[]>>();
   private inFlightCartRequests = new Map<string, Promise<CartApiItem[]>>();
   private inFlightFavoritesRequests = new Map<string, Promise<FavoriteApiItem[]>>();
+  private inFlightProductReviewsRequests = new Map<number, Promise<Review[]>>();
   private inFlightSellerOrdersRequests = new Map<string, Promise<UserOrder[] | null>>();
   private inFlightSellerOrdersCountRequests = new Map<string, Promise<number | null>>();
   private ordersCache = new Map<string, { data: UserOrder[]; expiresAt: number }>();
   private cartCache = new Map<string, { data: CartApiItem[]; expiresAt: number }>();
   private favoritesCache = new Map<string, { data: FavoriteApiItem[]; expiresAt: number }>();
+  private productReviewsCache = new Map<number, { data: Review[]; expiresAt: number }>();
   private productByIdCache = new Map<number, { data: Product; expiresAt: number }>();
   private missingProductByIdCache = new Map<number, { expiresAt: number }>();
   private userByIdCache = new Map<string, { data: User; expiresAt: number }>();
@@ -160,6 +163,76 @@ class ApiService {
     return extractList(payload)
       .map((item) => this.normalizeFavoriteItem(item))
       .filter((item): item is FavoriteApiItem => item !== null);
+  }
+
+  private normalizeReview(value: unknown): Review | null {
+    if (typeof value !== 'object' || value === null) {
+      return null;
+    }
+
+    const review = value as Record<string, unknown>;
+    const reviewId = this.toFiniteNumber(review.id ?? review.review_id ?? review.reviewId);
+    const productId = this.toFiniteNumber(review.product_id ?? review.productId);
+    const rating = this.toFiniteNumber(review.rating);
+    const text = typeof review.text === 'string' ? review.text.trim() : '';
+    const userId = review.user_id ?? review.userId;
+
+    if (reviewId === null || reviewId <= 0 || productId === null || productId <= 0) {
+      return null;
+    }
+
+    if (rating === null || rating < 1 || rating > 5 || text.length === 0 || typeof userId !== 'string') {
+      return null;
+    }
+
+    const createdAt = typeof review.created_at === 'string'
+      ? review.created_at
+      : (typeof review.createdAt === 'string' ? review.createdAt : undefined);
+    const updatedAt = typeof review.updated_at === 'string'
+      ? review.updated_at
+      : (typeof review.updatedAt === 'string' ? review.updatedAt : undefined);
+    const userNameRaw = review.user_name ?? review.userName ?? review.name;
+    const userName = typeof userNameRaw === 'string' && userNameRaw.trim().length > 0
+      ? userNameRaw.trim()
+      : undefined;
+
+    return {
+      id: Math.trunc(reviewId),
+      user_id: userId,
+      product_id: Math.trunc(productId),
+      text,
+      rating,
+      created_at: createdAt,
+      updated_at: updatedAt,
+      user_name: userName,
+    };
+  }
+
+  private normalizeReviews(payload: unknown): Review[] {
+    const extractList = (value: unknown): unknown[] => {
+      if (Array.isArray(value)) {
+        return value;
+      }
+
+      if (typeof value !== 'object' || value === null) {
+        return [];
+      }
+
+      const objectValue = value as Record<string, unknown>;
+      const listKeys = ['reviews', 'items', 'results', 'data', 'content'];
+      for (const key of listKeys) {
+        const maybeList = objectValue[key];
+        if (Array.isArray(maybeList)) {
+          return maybeList;
+        }
+      }
+
+      return [objectValue];
+    };
+
+    return extractList(payload)
+      .map((item) => this.normalizeReview(item))
+      .filter((item): item is Review => item !== null);
   }
 
   private normalizeSellerOrderItem(value: unknown): UserOrder['order_items'][number] | null {
@@ -363,12 +436,16 @@ class ApiService {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
+    const headers = new Headers(options.headers ?? {});
+    const hasBody = options.body !== undefined && options.body !== null;
+
+    if (hasBody && !headers.has('Content-Type') && !(options.body instanceof FormData)) {
+      headers.set('Content-Type', 'application/json');
+    }
+
     const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
       ...options,
+      headers,
     });
 
     if (!response.ok) {
@@ -830,6 +907,69 @@ class ApiService {
     });
   }
 
+  async getReviewsByProductId(productId: number, forceRefresh = false): Promise<Review[]> {
+    const cacheKey = Math.trunc(productId);
+    const now = Date.now();
+    const cacheTtlMs = 10_000;
+
+    if (!forceRefresh) {
+      const cached = this.productReviewsCache.get(cacheKey);
+      if (cached && cached.expiresAt > now) {
+        return cached.data;
+      }
+    }
+
+    const inFlight = this.inFlightProductReviewsRequests.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const requestPromise = this.request<unknown>(`/reviews/product/${cacheKey}`, {
+      credentials: 'include',
+    })
+      .then((payload) => this.normalizeReviews(payload))
+      .then((reviews) => reviews
+        .filter((review) => review.product_id === cacheKey)
+        .sort((first, second) => {
+          const firstDate = Date.parse(first.created_at ?? '');
+          const secondDate = Date.parse(second.created_at ?? '');
+          const normalizedFirst = Number.isNaN(firstDate) ? 0 : firstDate;
+          const normalizedSecond = Number.isNaN(secondDate) ? 0 : secondDate;
+          if (normalizedSecond === normalizedFirst) {
+            return second.id - first.id;
+          }
+          return normalizedSecond - normalizedFirst;
+        }))
+      .then((normalized) => {
+        this.productReviewsCache.set(cacheKey, {
+          data: normalized,
+          expiresAt: Date.now() + cacheTtlMs,
+        });
+        return normalized;
+      })
+      .finally(() => {
+        this.inFlightProductReviewsRequests.delete(cacheKey);
+      });
+
+    this.inFlightProductReviewsRequests.set(cacheKey, requestPromise);
+    return requestPromise;
+  }
+
+  async createReview(reviewData: ReviewCreatePayload): Promise<void> {
+    await this.request('/reviews', {
+      method: 'POST',
+      body: JSON.stringify(reviewData),
+      credentials: 'include',
+    });
+
+    const productId = Math.trunc(reviewData.product_id);
+    this.productReviewsCache.delete(productId);
+    this.inFlightProductReviewsRequests.delete(productId);
+    this.productByIdCache.delete(productId);
+    this.missingProductByIdCache.delete(productId);
+    this.inFlightProductByIdRequests.delete(productId);
+  }
+
   async getSellerOrders(sellerId: string, forceRefresh = false): Promise<UserOrder[] | null> {
     const cacheKey = sellerId;
     const now = Date.now();
@@ -1186,6 +1326,21 @@ class ApiService {
     return this.request('/categories', {
       method: 'POST',
       body: JSON.stringify(categoryData),
+      credentials: 'include',
+    });
+  }
+
+  async updateCategory(categoryId: number, categoryData: CategoryUpdate): Promise<Category> {
+    return this.request(`/categories/${Math.trunc(categoryId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(categoryData),
+      credentials: 'include',
+    });
+  }
+
+  async deleteCategory(categoryId: number): Promise<void> {
+    await this.request(`/categories/${Math.trunc(categoryId)}`, {
+      method: 'DELETE',
       credentials: 'include',
     });
   }

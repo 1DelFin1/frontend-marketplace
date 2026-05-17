@@ -8,3 +8,7 @@ export interface Category {
 export interface CategoryCreate {
   name: string;
 }
+
+export interface CategoryUpdate {
+  name: string;
+}

@@ -4,13 +4,15 @@ import { toast } from 'react-toastify';
 import ProductCard from './ProductCard';
 import { Product } from '../../types/product';
 import { apiService } from '../../services/api';
-import { CartApiItem } from '../../types/user';
+import { CartApiItem, FavoriteApiItem } from '../../types/user';
 import { getUserFromToken } from '../../utils/auth';
 
 const ProductList: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [cartItems, setCartItems] = useState<CartApiItem[]>([]);
+  const [favoriteItems, setFavoriteItems] = useState<FavoriteApiItem[]>([]);
   const [updatingProductIds, setUpdatingProductIds] = useState<number[]>([]);
+  const [updatingFavoriteProductIds, setUpdatingFavoriteProductIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -51,21 +53,42 @@ const ProductList: React.FC = () => {
     }
   }, []);
 
+  const loadFavorites = useCallback(async (forceRefresh = false) => {
+    const tokenUser = getUserFromToken();
+    if (!tokenUser?.id) {
+      setFavoriteItems([]);
+      return;
+    }
+
+    try {
+      const items = await apiService.getFavoritesByUserId(tokenUser.id, forceRefresh);
+      setFavoriteItems(items);
+    } catch {
+      setFavoriteItems([]);
+    }
+  }, []);
+
   useEffect(() => {
     void fetchProducts();
     void loadCart();
-  }, [fetchProducts, loadCart]);
+    void loadFavorites();
+  }, [fetchProducts, loadCart, loadFavorites]);
 
   useEffect(() => {
     const handleCartUpdated = () => {
       void loadCart();
     };
+    const handleFavoritesUpdated = () => {
+      void loadFavorites();
+    };
 
     window.addEventListener('cart-updated', handleCartUpdated as EventListener);
+    window.addEventListener('favorites-updated', handleFavoritesUpdated as EventListener);
     return () => {
       window.removeEventListener('cart-updated', handleCartUpdated as EventListener);
+      window.removeEventListener('favorites-updated', handleFavoritesUpdated as EventListener);
     };
-  }, [loadCart]);
+  }, [loadCart, loadFavorites]);
 
   const cartQuantityByProductId = useMemo(() => {
     const quantities: Record<number, number> = {};
@@ -74,6 +97,11 @@ const ProductList: React.FC = () => {
     });
     return quantities;
   }, [cartItems]);
+
+  const favoriteProductIds = useMemo(
+    () => new Set(favoriteItems.map((item) => item.product_id)),
+    [favoriteItems]
+  );
 
   const changeProductCartQuantity = useCallback(async (product: Product, nextQuantity: number) => {
     const tokenUser = getUserFromToken();
@@ -117,6 +145,39 @@ const ProductList: React.FC = () => {
     }
   }, [cartItems]);
 
+  const toggleProductFavorite = useCallback(async (product: Product) => {
+    const tokenUser = getUserFromToken();
+    if (!tokenUser?.id) {
+      toast.error('Требуется авторизация');
+      return;
+    }
+
+    if (updatingFavoriteProductIds.includes(product.id)) {
+      return;
+    }
+
+    setUpdatingFavoriteProductIds((prev) => (
+      prev.includes(product.id) ? prev : [...prev, product.id]
+    ));
+
+    try {
+      const favorites = await apiService.getFavoritesByUserId(tokenUser.id, true);
+      const isAlreadyFavorite = favorites.some((item) => item.product_id === product.id);
+      const nextFavorites = isAlreadyFavorite
+        ? favorites.filter((item) => item.product_id !== product.id)
+        : [...favorites, { product_id: product.id, quantity: 1 }];
+
+      await apiService.setFavoritesByUserId(tokenUser.id, nextFavorites);
+      setFavoriteItems(nextFavorites);
+      window.dispatchEvent(new Event('favorites-updated'));
+      toast.success(isAlreadyFavorite ? 'Товар удален из избранного' : 'Товар добавлен в избранное');
+    } catch {
+      toast.error('Не удалось обновить избранное');
+    } finally {
+      setUpdatingFavoriteProductIds((prev) => prev.filter((id) => id !== product.id));
+    }
+  }, [updatingFavoriteProductIds]);
+
   if (loading) {
     return <div className="loading">Загрузка товаров...</div>;
   }
@@ -135,6 +196,9 @@ const ProductList: React.FC = () => {
             cartQuantity={cartQuantityByProductId[product.id] ?? 0}
             cartUpdating={updatingProductIds.includes(product.id)}
             onChangeCartQuantity={changeProductCartQuantity}
+            isFavorite={favoriteProductIds.has(product.id)}
+            favoriteUpdating={updatingFavoriteProductIds.includes(product.id)}
+            onToggleFavorite={toggleProductFavorite}
           />
         ))}
       </div>

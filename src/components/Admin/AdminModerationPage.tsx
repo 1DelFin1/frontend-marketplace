@@ -33,16 +33,41 @@ const formatCreatedAt = (value?: string): string => {
   }).format(date);
 };
 
+const sortCategories = (categories: Category[]): Category[] => {
+  return [...categories].sort((left, right) => left.name.localeCompare(right.name, 'ru'));
+};
+
 const AdminModerationPage: React.FC<AdminModerationPageProps> = ({ onLogout }) => {
   const [pendingProducts, setPendingProducts] = useState<Product[]>([]);
-  const [categoriesById, setCategoriesById] = useState<Map<number, string>>(new Map());
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryNameDrafts, setCategoryNameDrafts] = useState<Record<number, string>>({});
+  const [newCategoryName, setNewCategoryName] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [processingProductIds, setProcessingProductIds] = useState<number[]>([]);
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [updatingCategoryIds, setUpdatingCategoryIds] = useState<number[]>([]);
+  const [deletingCategoryIds, setDeletingCategoryIds] = useState<number[]>([]);
 
   const adminName = getUserFromToken()?.name ?? 'Администратор';
 
-  const loadPendingProducts = useCallback(async () => {
+  const categoriesById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category.name])),
+    [categories]
+  );
+
+  const syncCategoryDrafts = (nextCategories: Category[]) => {
+    setCategoryNameDrafts((previousDrafts) => {
+      const nextDrafts: Record<number, string> = {};
+      nextCategories.forEach((category) => {
+        const previousValue = previousDrafts[category.id];
+        nextDrafts[category.id] = typeof previousValue === 'string' ? previousValue : category.name;
+      });
+      return nextDrafts;
+    });
+  };
+
+  const loadModerationData = useCallback(async () => {
     setLoading(true);
     setLoadError('');
 
@@ -52,18 +77,20 @@ const AdminModerationPage: React.FC<AdminModerationPageProps> = ({ onLogout }) =
         apiService.getCategories(),
       ]);
 
+      const sortedCategories = sortCategories(categoriesData);
       setPendingProducts(pendingProductsData);
-      setCategoriesById(new Map(categoriesData.map((category: Category) => [category.id, category.name])));
+      setCategories(sortedCategories);
+      syncCategoryDrafts(sortedCategories);
     } catch {
-      setLoadError('Не удалось загрузить список товаров на модерации');
+      setLoadError('Не удалось загрузить данные модерации');
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadPendingProducts();
-  }, [loadPendingProducts]);
+    void loadModerationData();
+  }, [loadModerationData]);
 
   const handleLogout = async () => {
     try {
@@ -95,6 +122,108 @@ const AdminModerationPage: React.FC<AdminModerationPageProps> = ({ onLogout }) =
       toast.error('Не удалось выполнить действие модерации');
     } finally {
       setProcessingProductIds((previousIds) => previousIds.filter((id) => id !== productId));
+    }
+  };
+
+  const handleCreateCategory = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const normalizedName = newCategoryName.trim();
+    if (!normalizedName) {
+      toast.error('Введите название категории');
+      return;
+    }
+
+    setCreatingCategory(true);
+    try {
+      const category = await apiService.createCategory({ name: normalizedName });
+      setCategories((previous) => {
+        const next = previous.filter((item) => item.id !== category.id);
+        next.push(category);
+        const sorted = sortCategories(next);
+        syncCategoryDrafts(sorted);
+        return sorted;
+      });
+      setCategoryNameDrafts((previous) => ({ ...previous, [category.id]: category.name }));
+      setNewCategoryName('');
+      toast.success('Категория сохранена');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('status: 403')) {
+        toast.error('Добавлять категории может только администратор');
+      } else {
+        toast.error('Не удалось сохранить категорию');
+      }
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
+  const handleUpdateCategory = async (category: Category) => {
+    const draftName = categoryNameDrafts[category.id] ?? category.name;
+    const normalizedName = draftName.trim();
+    if (!normalizedName) {
+      toast.error('Название категории не может быть пустым');
+      return;
+    }
+
+    if (normalizedName === category.name) {
+      return;
+    }
+
+    setUpdatingCategoryIds((previous) => (
+      previous.includes(category.id) ? previous : [...previous, category.id]
+    ));
+
+    try {
+      const updatedCategory = await apiService.updateCategory(category.id, { name: normalizedName });
+      setCategories((previous) => {
+        const next = previous.map((item) => (item.id === updatedCategory.id ? updatedCategory : item));
+        const sorted = sortCategories(next);
+        syncCategoryDrafts(sorted);
+        return sorted;
+      });
+      setCategoryNameDrafts((previous) => ({ ...previous, [updatedCategory.id]: updatedCategory.name }));
+      toast.success('Категория обновлена');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('status: 409')) {
+        toast.error('Категория с таким названием уже существует');
+      } else if (errorMessage.includes('status: 404')) {
+        toast.error('Категория не найдена');
+      } else {
+        toast.error('Не удалось обновить категорию');
+      }
+    } finally {
+      setUpdatingCategoryIds((previous) => previous.filter((id) => id !== category.id));
+    }
+  };
+
+  const handleDeleteCategory = async (category: Category) => {
+    setDeletingCategoryIds((previous) => (
+      previous.includes(category.id) ? previous : [...previous, category.id]
+    ));
+
+    try {
+      await apiService.deleteCategory(category.id);
+      setCategories((previous) => previous.filter((item) => item.id !== category.id));
+      setCategoryNameDrafts((previous) => {
+        const next = { ...previous };
+        delete next[category.id];
+        return next;
+      });
+      toast.success('Категория удалена');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('status: 409')) {
+        toast.error('Нельзя удалить категорию, если в ней есть товары');
+      } else if (errorMessage.includes('status: 404')) {
+        toast.error('Категория не найдена');
+      } else {
+        toast.error('Не удалось удалить категорию');
+      }
+    } finally {
+      setDeletingCategoryIds((previous) => previous.filter((id) => id !== category.id));
     }
   };
 
@@ -183,6 +312,82 @@ const AdminModerationPage: React.FC<AdminModerationPageProps> = ({ onLogout }) =
                       onClick={() => void handleModerationDecision(product, 'reject')}
                     >
                       {isProcessing ? 'Сохраняем...' : 'Reject'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </article>
+
+      <article className="seller-card admin-categories-card">
+        <div className="seller-products-toolbar">
+          <div className="seller-products-title-block">
+            <h2>Категории</h2>
+            <span>{categories.length} всего</span>
+          </div>
+        </div>
+
+        <form className="admin-category-create-form" onSubmit={handleCreateCategory}>
+          <input
+            type="text"
+            maxLength={255}
+            value={newCategoryName}
+            onChange={(event) => setNewCategoryName(event.target.value)}
+            placeholder="Новая категория"
+            disabled={creatingCategory}
+          />
+          <button type="submit" className="seller-product-save-btn" disabled={creatingCategory}>
+            {creatingCategory ? 'Сохраняем...' : 'Добавить категорию'}
+          </button>
+        </form>
+
+        {categories.length === 0 && (
+          <div className="empty-state seller-products-empty">
+            <h3>Категорий пока нет</h3>
+            <p>Добавьте первую категорию для создания товаров.</p>
+          </div>
+        )}
+
+        {categories.length > 0 && (
+          <div className="admin-categories-table">
+            {categories.map((category) => {
+              const isUpdating = updatingCategoryIds.includes(category.id);
+              const isDeleting = deletingCategoryIds.includes(category.id);
+              const isBusy = isUpdating || isDeleting;
+
+              return (
+                <div key={category.id} className="admin-categories-row">
+                  <input
+                    type="text"
+                    maxLength={255}
+                    value={categoryNameDrafts[category.id] ?? category.name}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setCategoryNameDrafts((previous) => ({
+                        ...previous,
+                        [category.id]: nextValue,
+                      }));
+                    }}
+                    disabled={isBusy}
+                  />
+                  <div className="admin-categories-actions">
+                    <button
+                      type="button"
+                      className="seller-product-save-btn"
+                      disabled={isBusy}
+                      onClick={() => void handleUpdateCategory(category)}
+                    >
+                      {isUpdating ? 'Сохраняем...' : 'Сохранить'}
+                    </button>
+                    <button
+                      type="button"
+                      className="seller-product-sale-btn danger"
+                      disabled={isBusy}
+                      onClick={() => void handleDeleteCategory(category)}
+                    >
+                      {isDeleting ? 'Удаляем...' : 'Удалить'}
                     </button>
                   </div>
                 </div>

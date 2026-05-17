@@ -48,7 +48,7 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
       setLoading(true);
       setLoadError('');
       try {
-        const data = await apiService.getCurrentSeller();
+        const data = await apiService.getCurrentSeller(true);
         setSeller(data);
         setSellerOrdersCount(typeof data.orders_count === 'number' ? data.orders_count : null);
         const actualOrdersCount = await apiService.getSellerOrdersCount(data.id, data.orders_count ?? null);
@@ -239,7 +239,7 @@ const SellerProfile: React.FC<SellerProfileProps> = ({ onLogout }) => {
           <div className="seller-profile-stats">
             <div>
               <span>Рейтинг</span>
-              <strong>{(seller.rating ?? 0).toFixed(1)}%</strong>
+              <strong>{(seller.rating ?? 0).toFixed(2)} / 5</strong>
             </div>
             <div>
               <span>Заказов</span>

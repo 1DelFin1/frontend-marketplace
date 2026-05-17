@@ -17,7 +17,7 @@ const DASHBOARD_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const deliveredOrderStatuses = new Set(['delivered', 'completed']);
 
-const toPercent = (value: number): string => `${value.toFixed(1)}%`;
+const formatSellerRating = (value: number): string => `${value.toFixed(2)} / 5`;
 const toDayStart = (date: Date): Date => {
   const copy = new Date(date);
   copy.setHours(0, 0, 0, 0);
@@ -33,7 +33,7 @@ const SellerDashboard: React.FC = () => {
   useEffect(() => {
     const loadSeller = async () => {
       try {
-        const data = await apiService.getCurrentSeller();
+        const data = await apiService.getCurrentSeller(true);
         setSeller(data);
         setSellerOrdersCount(typeof data.orders_count === 'number' ? data.orders_count : null);
         const orders = await apiService.getSellerOrders(data.id);
@@ -124,7 +124,7 @@ const SellerDashboard: React.FC = () => {
       .join(' ');
   }, [sellerOrdersStats]);
 
-  const sellerRating = seller?.rating ?? 98.8;
+  const sellerRating = typeof seller?.rating === 'number' ? seller.rating : 0;
   const formattedSellerOrdersCount = sellerOrdersCount !== null ? sellerOrdersCount.toLocaleString('ru-RU') : '—';
   const formattedOrdersInWindow = sellerOrdersStats.ordersInWindow !== null
     ? sellerOrdersStats.ordersInWindow.toLocaleString('ru-RU')
@@ -203,7 +203,7 @@ const SellerDashboard: React.FC = () => {
               <ul className="seller-list">
                 <li>
                   <span>Оценка работы</span>
-                  <b>{toPercent(sellerRating)}</b>
+                  <b>{formatSellerRating(sellerRating)}</b>
                 </li>
                 <li>
                   <span>Поставки без опозданий</span>

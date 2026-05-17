@@ -16,7 +16,6 @@ const sellerNavigation = [
   { label: 'Отзывы' },
 ];
 
-const CUSTOM_CATEGORY_VALUE = '__custom__';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const createInitialFormState = (categoryId = '') => ({
@@ -25,7 +24,6 @@ const createInitialFormState = (categoryId = '') => ({
   price: '',
   quantity: '0',
   categoryId,
-  customCategoryName: '',
 });
 
 const createInitialEditFormState = (product?: Product) => ({
@@ -392,36 +390,15 @@ const SellerProductsPage: React.FC = () => {
 
     setCreating(true);
     try {
-      let categoryId: number;
-
       if (!selectedCategory) {
         toast.error('Выберите категорию');
         return;
       }
 
-      if (selectedCategory === CUSTOM_CATEGORY_VALUE) {
-        const customCategoryName = formData.customCategoryName.trim();
-        if (!customCategoryName) {
-          toast.error('Введите название новой категории');
-          return;
-        }
-
-        const newCategory = await apiService.createCategory({ name: customCategoryName });
-        categoryId = newCategory.id;
-
-        setCategories((prev) => {
-          const exists = prev.some((category) => category.id === newCategory.id);
-          if (exists) {
-            return prev;
-          }
-          return [...prev, newCategory].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-        });
-      } else {
-        categoryId = Number(selectedCategory);
-        if (!Number.isInteger(categoryId) || categoryId <= 0) {
-          toast.error('Выберите корректную категорию');
-          return;
-        }
+      const categoryId = Number(selectedCategory);
+      if (!Number.isInteger(categoryId) || categoryId <= 0) {
+        toast.error('Выберите корректную категорию');
+        return;
       }
 
       const payload: ProductCreate = {
@@ -785,28 +762,8 @@ const SellerProductsPage: React.FC = () => {
                         {category.name}
                       </option>
                     ))}
-                    <option value={CUSTOM_CATEGORY_VALUE}>Своя категория</option>
                   </select>
                 </div>
-
-                {formData.categoryId === CUSTOM_CATEGORY_VALUE && (
-                  <div className="form-group">
-                    <label htmlFor="new-custom-category-name">Новая категория</label>
-                    <input
-                      id="new-custom-category-name"
-                      name="customCategoryName"
-                      type="text"
-                      maxLength={255}
-                      value={formData.customCategoryName}
-                      onChange={handleInputChange}
-                      placeholder="Например: Товары для кемпинга"
-                      required
-                    />
-                    <small className="seller-form-hint">
-                      Сначала создадим категорию, затем добавим товар.
-                    </small>
-                  </div>
-                )}
 
                 <div className="seller-create-product-two-columns">
                   <div className="form-group">
